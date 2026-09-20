@@ -1,0 +1,11 @@
+# Word / Office temp files
+~$*.docx
+~$*.doc
+*.tmp
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Temp unzip
+opencode/
