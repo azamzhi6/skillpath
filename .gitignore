@@ -9,3 +9,9 @@ Desktop.ini
 
 # Temp unzip
 opencode/
+
+# Node / Vite prototype (app/)
+app/node_modules/
+app/dist/
+app/dist-ssr/
+*.local

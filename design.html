@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SkillPath — Design Preview (Task 2)</title>
+<style>
+  :root{
+    --primary:#0F766E;
+    --primary-dark:#0B5E54;
+    --primary-tint:#E6F2EF;
+    --secondary:#31567A;
+    --secondary-tint:#EAF0F6;
+    --ink:#132E32;
+    --body:#3F4A4A;
+    --muted:#677272;
+    --line:#DFE7E7;
+    --surface:#F6F9F9;
+    --card:#FFFFFF;
+    --success:#0B5E54;
+    --success-bg:#E7F4EE;
+    --radius:12px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;font-family:var(--font);color:var(--body);background:var(--surface);
+    line-height:1.65;font-size:16px;
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px 64px}
+  header.brand{
+    background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:28px 28px 24px;margin-bottom:24px;
+  }
+  .brand-row{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+  .mark{
+    width:44px;height:44px;border-radius:12px;background:var(--primary);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:22px;
+  }
+  h1{font-size:36px;line-height:1.12;font-weight:800;letter-spacing:-0.015em;color:var(--ink);margin:0}
+  .tagline{margin:8px 0 0;font-size:17px;line-height:1.55;color:var(--body)}
+  .coach-note{
+    margin-top:14px;background:var(--primary-tint);border:1px solid #CBE3DD;color:var(--ink);
+    border-radius:var(--radius);padding:12px 16px;font-size:15.5px;line-height:1.65;
+  }
+  .coach-note strong{color:var(--primary-dark)}
+  section.panel{
+    background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:24px;margin-bottom:24px;
+  }
+  h2{font-size:22px;line-height:1.25;font-weight:700;letter-spacing:-0.005em;color:var(--ink);margin:0 0 8px}
+  .section-sub{margin:0 0 16px;color:var(--muted);font-size:15px;line-height:1.6}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .swatch{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fff}
+  .swatch .chip{height:64px}
+  .swatch .meta{padding:10px 12px}
+  .swatch .name{font-weight:600;color:var(--ink);font-size:14px;margin:0}
+  .swatch .hex{margin:2px 0 0;font-size:13px;color:var(--muted)}
+  .swatch .use{margin:4px 0 0;font-size:13px;color:var(--muted)}
+  .type-sample{border-top:1px solid var(--line);padding:14px 0}
+  .type-sample:first-of-type{border-top:none}
+  .type-label{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;font-weight:600}
+  .t-h1{font-size:36px;font-weight:800;letter-spacing:-0.015em;color:var(--ink);margin:0;line-height:1.12}
+  .t-h2{font-size:22px;font-weight:700;letter-spacing:-0.005em;color:var(--ink);margin:0;line-height:1.25}
+  .t-body{font-size:17px;line-height:1.7;margin:0;max-width:62ch}
+  .t-small{font-size:13px;line-height:1.6;color:var(--muted);margin:0}
+  .btn{
+    display:inline-block;border:none;cursor:pointer;font-family:inherit;
+    background:var(--primary);color:#fff;font-weight:600;font-size:16px;
+    padding:12px 22px;border-radius:10px;line-height:1.2;
+  }
+  .btn:hover{background:var(--primary-dark)}
+  .btn:focus-visible{outline:3px solid var(--secondary);outline-offset:2px}
+  .btn-secondary{
+    background:#fff;color:var(--primary-dark);border:2px solid var(--primary);
+    padding:10px 20px;
+  }
+  .btn-secondary:hover{background:var(--primary-tint)}
+  .btn-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+  label.field-label{display:block;font-weight:700;color:var(--ink);font-size:17px;line-height:1.4;margin:0 0 8px}
+  .field-hint{margin:0 0 10px;font-size:14px;line-height:1.6;color:var(--muted)}
+  input[type="text"]{
+    width:100%;font-family:inherit;font-size:17px;font-weight:500;line-height:1.5;color:var(--ink);
+    padding:13px 14px;border:2px solid var(--line);border-radius:10px;background:#fff;
+  }
+  input[type="text"]::placeholder{color:#8A9494}
+  input[type="text"]:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-tint)}
+  .goal-row{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}
+  .goal-row input{flex:1;min-width:240px}
+  .chat{
+    border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);
+    padding:16px;margin-top:16px;
+  }
+  .msg{max-width:62ch;padding:10px 14px;border-radius:12px;margin:0 0 10px;font-size:15.5px;line-height:1.65}
+  .msg.coach{background:#fff;border:1px solid var(--line);color:var(--ink)}
+  .msg.learner{background:var(--secondary-tint);border:1px solid #CBD9E8;color:var(--ink);margin-left:auto}
+  .msg .who{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:4px}
+  .card{border:1px solid var(--line);border-radius:var(--radius);background:#fff;padding:18px}
+  .card h3{margin:0 0 4px;font-size:18px;font-weight:700;line-height:1.3;color:var(--ink)}
+  .card .outcome{margin:0 0 12px;font-size:14px;line-height:1.6;color:var(--muted)}
+  .stage{list-style:none;margin:0 0 12px;padding:0}
+  .stage li{
+    display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line);font-size:15px;line-height:1.6;
+  }
+  .stage li:first-child{border-top:none}
+  .dot{flex:none;width:22px;height:22px;border-radius:50%;font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .dot.done{background:var(--success-bg);color:var(--success);border:1px solid #BFE0D2}
+  .dot.now{background:var(--primary);color:#fff}
+  .dot.next{background:#fff;color:var(--muted);border:1px solid var(--line)}
+  .pill{
+    display:inline-block;font-size:12px;font-weight:600;letter-spacing:.02em;
+    background:var(--success-bg);color:var(--success);border-radius:999px;padding:3px 10px;margin-bottom:8px;
+  }
+  .next-action{border:2px solid var(--primary);border-radius:var(--radius);padding:16px;background:var(--primary-tint);color:var(--ink)}
+  .next-action h3{margin:0 0 6px;font-size:18px;font-weight:700;line-height:1.3}
+  .next-action p{margin:0 0 12px;font-size:15px;line-height:1.65}
+  footer{color:var(--muted);font-size:13px;text-align:center;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="brand">
+    <div class="brand-row">
+      <div class="mark" aria-hidden="true">S</div>
+      <h1>SkillPath</h1>
+    </div>
+    <p class="tagline">A personalised AI learning coach — from intention to demonstrated capability.</p>
+    <p class="coach-note"><strong>SkillPath coach:</strong> tell me what you want to learn. I will figure out how to help you get there — starting point, path, practice and feedback.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="palette-h">
+    <h2 id="palette-h">Color palette</h2>
+    <p class="section-sub">Calm, professional, trustworthy. One primary action color, one supporting blue, quiet neutrals.</p>
+    <div class="swatches">
+      <div class="swatch"><div class="chip" style="background:#0F766E"></div><div class="meta"><p class="name">Primary — Deep Teal</p><p class="hex">#0F766E</p><p class="use">Primary buttons, key highlights</p></div></div>
+      <div class="swatch"><div class="chip" style="background:#0B5E54"></div><div class="meta"><p class="name">Primary Dark — Pine</p><p class="hex">#0B5E54</p><p class="use">Button hover, coach emphasis</p></div></div>
+      <div class="swatch"><div class="chip" style="background:#31567A"></div><div class="meta"><p class="name">Secondary — Slate Blue</p><p class="hex">#31567A</p><p class="use">Learner messages, focus rings, links</p></div></div>
+      <div class="swatch"><div class="chip" style="background:#132E32"></div><div class="meta"><p class="name">Neutral — Ink</p><p class="hex">#132E32</p><p class="use">Headings</p></div></div>
+      <div class="swatch"><div class="chip" style="background:#3F4A4A"></div><div class="meta"><p class="name">Neutral — Body</p><p class="hex">#3F4A4A</p><p class="use">Body text</p></div></div>
+      <div class="swatch"><div class="chip" style="background:#F6F9F9;border-bottom:1px solid #DFE7E7"></div><div class="meta"><p class="name">Neutral — Surface</p><p class="hex">#F6F9F9</p><p class="use">Page background</p></div></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="type-h">
+    <h2 id="type-h">Typography hierarchy</h2>
+    <p class="section-sub">System font stack — fast, readable, no downloads. Strong size and weight contrast for accessibility.</p>
+    <div class="type-sample"><p class="type-label">Main heading — 36px Extra-bold</p><p class="t-h1">Turn “I want to learn Excel” into real capability</p></div>
+    <div class="type-sample"><p class="type-label">Subheading — 22px Bold</p><p class="t-h2">Your path adapts as you practise and improve</p></div>
+    <div class="type-sample"><p class="type-label">Body text — 17px Regular, relaxed line-height</p><p class="t-body">SkillPath checks your starting point, builds a personalised sequence of short learning steps, and gives specific feedback on every practice task.</p></div>
+    <div class="type-sample"><p class="type-label">Small / supporting text — 13px Muted</p><p class="t-small">Progress is measured by what you can demonstrate, not lessons completed. Mock data — no account needed.</p></div>
+  </section>
+
+  <section class="panel" aria-labelledby="cta-h">
+    <h2 id="cta-h">Buttons</h2>
+    <p class="section-sub">One unmistakable primary action; a quiet secondary for alternatives.</p>
+    <div class="btn-row">
+      <button class="btn" type="button">Start my learning path</button>
+      <button class="btn btn-secondary" type="button">See how it works</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="goal-h">
+    <h2 id="goal-h">Learner experience — set your goal</h2>
+    <p class="section-sub">The core SkillPath moment: state the outcome you want, not a course name.</p>
+    <label class="field-label" for="goal-input">What do you want to learn or be able to do?</label>
+    <p class="field-hint">Example: “I want to learn Excel so I can analyse monthly sales data.”</p>
+    <div class="goal-row">
+      <input id="goal-input" type="text" value="I want to learn Excel for financial analysis" aria-describedby="goal-h">
+      <button class="btn" type="button">Understand my goal</button>
+    </div>
+    <div class="chat" aria-label="Example coach exchange">
+      <p class="msg learner"><span class="who">You</span>I want to learn Excel for financial analysis.</p>
+      <p class="msg coach"><span class="who">SkillPath coach</span>Got it — you want to analyse financial data in Excel. Quick check: have you used formulas or PivotTables before, and how many hours a week can you practise?</p>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="path-h">
+    <h2 id="path-h">Sample personalised path + next action</h2>
+    <p class="section-sub">Capability over completion: each stage ends in practice, and the next step is always explicit.</p>
+    <div class="cards">
+      <article class="card" aria-label="Sample learning path">
+        <span class="pill">Personalised path</span>
+        <h3>Excel for Financial Analysis</h3>
+        <p class="outcome">Outcome: clean, analyse and present a monthly sales dataset with charts.</p>
+        <ul class="stage">
+          <li><span class="dot done" aria-hidden="true">✓</span><span><strong>1. Spreadsheet foundations</strong> — practise: format and validate 50 rows.</span></li>
+          <li><span class="dot now" aria-hidden="true">2</span><span><strong>2. Formulas that matter</strong> — practise: SUMIFS, XLOOKUP on sales data.</span></li>
+          <li><span class="dot next" aria-hidden="true">3</span><span><strong>3. PivotTables &amp; charts</strong> — produce: monthly margin summary.</span></li>
+        </ul>
+      </article>
+      <article class="card" aria-label="Sample next learning action">
+        <span class="pill">Next learning action</span>
+        <div class="next-action">
+          <h3>Practise: SUMIFS on the sales dataset</h3>
+          <p>15 minutes · Guided practice. Coach feedback checks accuracy and method, then adapts your path.</p>
+          <button class="btn" type="button">Start next step</button>
+        </div>
+        <p class="t-small" style="margin-top:12px">Because you completed formatting cleanly, the coach skipped revision and raised difficulty slightly.</p>
+      </article>
+    </div>
+  </section>
+
+  <footer>SkillPath design preview — Task 2. Static mock with realistic content; no backend, no account, no external services.</footer>
+
+</div>
+</body>
+</html>
