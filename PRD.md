@@ -49,6 +49,57 @@ persistence. Keep the implementation deliberately minimal.
 backend features, tables, auth system, file uploads, or deployment work are
 authorised by this decision.
 
+## Task 1 — Implementation Plan
+
+Ordered prototype phases with each phase's objective and concrete output. No
+Phase 3 backend is built yet; progress persists in the browser behind the
+storage-adapter seam.
+
+**Phase 0 — Baseline & Guardrails**
+
+- Objective: establish the project baseline, scope boundaries, local runtime and architectural guardrails.
+- Output: agreed local stack, repository structure, scope guardrails and prototype constraints.
+
+**Phase 1 — Goal Capture + Mock Clarification**
+
+- Objective: implement the learner's initial goal capture and clarification experience.
+- Output: working goal-entry flow with deterministic/mock clarification.
+
+**Phase 2 — Diagnostic + Personalised Learning Path**
+
+- Objective: assess the learner's starting point and generate a personalised learning pathway.
+- Output: diagnostic flow, personalised path, stages/practice tasks and Next Action.
+
+**Phase 3 — Progress Persistence & Data Layer**
+
+- Objective: replace temporary browser persistence with the planned local data layer.
+- Output: SQLite (`better-sqlite3`) database and thin local Express API behind the existing storage interface.
+
+**Phase 4 — Prototype Hardening & Handoff**
+
+- Objective: validate the prototype, improve reliability and prepare the assessment/demo handoff.
+- Output: tested local prototype, documentation and demo-ready repository.
+
+### Local execution
+
+The application runs locally via `npm run dev`.
+
+The database runs locally as a SQLite file.
+
+### Authentication
+
+Authentication is mocked: a single local demo learner is used, with no passwords or tokens stored.
+
+### File storage
+
+SkillPath does not require file uploads for this prototype, so no file-storage service is required.
+
+### Reviewed Tool Choice — Persistence
+
+We chose SQLite with a thin local Express API. It suits SkillPath because it gives real relational tables for goals, paths and progress while remaining a lightweight local database.
+
+This note complements the detailed decision rationale above; it does not replace it.
+
 ## Task 2 — Design Refinement: typography and readability (DECIDED)
 
 **Original typography approach:** `design.html` used a system font stack with a flat
@@ -67,3 +118,8 @@ refined spacing; body sample set to 17px with 1.7 line-height (page base 1.65);
 supporting text, hints, messages and card copy given explicit relaxed line-heights;
 goal input and its label raised to 17px medium for readability. Color palette,
 layout, buttons (other than inherited text rendering) and behavior are unchanged.
+
+## Task 2 - Design Refinement (typography readability)
+
+ASCII alias for the "Task 2 — Design Refinement: typography and readability
+(DECIDED)" note above; see that section for the full refinement record.
