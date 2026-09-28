@@ -13,16 +13,27 @@ const dataDir = join(here, 'data')
 mkdirSync(dataDir, { recursive: true })
 
 const dbPath = join(dataDir, 'skillpath.db')
-const db = new Database(dbPath)
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
 
-const schema = readFileSync(join(here, 'schema.sql'), 'utf8')
-db.exec(schema)
+let db: InstanceType<typeof Database>
+try {
+  db = new Database(dbPath)
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
 
-db.prepare(
-  'INSERT OR IGNORE INTO learners (id, display_name) VALUES (?, ?)',
-).run(DEMO_LEARNER_ID, 'Demo Learner')
+  const schema = readFileSync(join(here, 'schema.sql'), 'utf8')
+  db.exec(schema)
+
+  db.prepare(
+    'INSERT OR IGNORE INTO learners (id, display_name) VALUES (?, ?)',
+  ).run(DEMO_LEARNER_ID, 'Demo Learner')
+} catch (err) {
+  console.error(
+    `SkillPath API cannot start: failed to open the SQLite database at ${dbPath}: ${
+      err instanceof Error ? err.message : String(err)
+    }`,
+  )
+  process.exit(1)
+}
 
 export interface StoredSnapshot {
   goalText: string

@@ -70,9 +70,32 @@ async function requestJson(
   path: string,
   init?: RequestInit,
 ): Promise<unknown> {
-  const res = await fetch(path, init)
-  if (!res.ok) throw new Error(`API ${res.status} for ${path}`)
+  let res: Response
+  try {
+    res = await fetch(path, { ...init, signal: AbortSignal.timeout(5000) })
+  } catch {
+    throw new Error(`API unreachable for ${path}`)
+  }
+  if (!res.ok) throw new ApiHttpError(res.status, path)
   return (await res.json()) as unknown
+}
+
+export class ApiHttpError extends Error {
+  status: number
+  constructor(status: number, path: string) {
+    super(`API ${status} for ${path}`)
+    this.status = status
+  }
+}
+
+/**
+ * Network failures, timeouts and 5xx responses mean the API is unreachable.
+ * 4xx responses mean the payload was rejected — the API is healthy, so the
+ * app must stay in API mode (a short goal must never flip it offline).
+ */
+export function isOfflineError(err: unknown): boolean {
+  if (err instanceof ApiHttpError) return err.status >= 500
+  return true
 }
 
 export async function apiHealth(): Promise<boolean> {
@@ -98,11 +121,20 @@ export async function fetchRemoteState(): Promise<LearnerState | null> {
       typeof s.experience === 'string' && typeof s.hoursPerWeek === 'string'
         ? { experience: s.experience, hoursPerWeek: s.hoursPerWeek }
         : null,
-    answers: Array.isArray(s.answers) ? s.answers : [],
+    answers: Array.isArray(s.answers) ? s.answers.filter(isAnswer) : [],
     completedStageIds: Array.isArray(s.completedStageIds)
       ? s.completedStageIds.filter((id) => typeof id === 'string')
       : [],
   }
+}
+
+function isAnswer(value: unknown): value is DiagnosticAnswer {
+  if (typeof value !== 'object' || value === null) return false
+  const answer = value as Record<string, unknown>
+  return (
+    typeof answer.questionId === 'string' &&
+    typeof answer.choiceId === 'string'
+  )
 }
 
 export async function pushRemoteState(

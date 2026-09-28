@@ -11,6 +11,7 @@ import {
   apiHealth,
   clearRemoteState,
   fetchRemoteState,
+  isOfflineError,
   localStorageAdapter,
   pushRemoteState,
   type ApiJourneySnapshot,
@@ -85,8 +86,21 @@ export default function App() {
     if (saved.clarification) setClarification(saved.clarification)
     setAnswers(saved.answers)
     setCompletedStageIds(saved.completedStageIds)
-    if (saved.clarification && saved.answers.length > 0) setStep('path')
-    else if (saved.clarification) setStep('diagnostic')
+    // Only resume at the path step when the diagnostic is fully answered;
+    // a partial diagnostic (e.g. after a mid-step refresh) resumes at the
+    // diagnostic step with answers preserved.
+    const needed = diagnosticQuestions(
+      detectTemplate(saved.goalText),
+    ).length
+    if (
+      saved.clarification &&
+      needed > 0 &&
+      saved.answers.length >= needed
+    ) {
+      setStep('path')
+    } else if (saved.clarification) {
+      setStep('diagnostic')
+    }
     setRestored(true)
   }
 
@@ -109,13 +123,13 @@ export default function App() {
           }
           if (local && local.goalText.trim()) {
             applyState(local)
-            await pushRemoteState(buildSnapshot(local)).catch(() => {
-              if (!cancelled) setApiMode('offline')
+            await pushRemoteState(buildSnapshot(local)).catch((err: unknown) => {
+              if (!cancelled && isOfflineError(err)) setApiMode('offline')
             })
             return
           }
-        } catch {
-          if (!cancelled) setApiMode('offline')
+        } catch (err: unknown) {
+          if (!cancelled && isOfflineError(err)) setApiMode('offline')
         }
       } else {
         setApiMode('offline')
@@ -131,6 +145,8 @@ export default function App() {
 
   // Persist progress: always mirror locally; write through to SQLite/API
   // while it is healthy (local copy doubles as the offline fallback).
+  // Short goals (<4 chars) stay local-only: the API rejects them, and a
+  // rejection must never flip a healthy API into offline mode.
   useEffect(() => {
     if (!restored && goalText.trim() === '') return
     const state: LearnerState = {
@@ -141,13 +157,13 @@ export default function App() {
     }
     if (goalText.trim() === '') return
     localStorageAdapter.save(state)
-    if (apiMode === 'api') {
+    if (apiMode === 'api' && goalText.trim().length >= 4) {
       setSaving(true)
       pushRemoteState(buildSnapshot(state))
         .then(() => setSaving(false))
-        .catch(() => {
+        .catch((err: unknown) => {
           setSaving(false)
-          setApiMode('offline')
+          if (isOfflineError(err)) setApiMode('offline')
         })
     }
   }, [goalText, clarification, answers, completedStageIds, step, restored, apiMode])
@@ -234,11 +250,13 @@ export default function App() {
         </header>
 
         <div aria-live="polite" className="mb-4 text-[13px] leading-relaxed text-muted">
-          {apiMode === 'api' && saving
-            ? 'Saving…'
-            : apiMode === 'offline'
-              ? 'Using offline copy (API unreachable).'
-              : null}
+          {apiMode === 'checking'
+            ? 'Loading your journey…'
+            : apiMode === 'api' && saving
+              ? 'Saving…'
+              : apiMode === 'offline'
+                ? 'Using offline copy (API unreachable).'
+                : null}
         </div>
 
         <main>

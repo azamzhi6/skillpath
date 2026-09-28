@@ -3,6 +3,7 @@
 // Run: npm run dev:api   →   http://localhost:5174/api/health
 
 import express from 'express'
+import type { NextFunction, Request, Response } from 'express'
 import {
   clearAll,
   dbFilePath,
@@ -37,6 +38,15 @@ app.put('/api/state', (req, res) => {
 app.delete('/api/state', (_req, res) => {
   clearAll()
   res.json({ ok: true })
+})
+
+// Malformed JSON should answer JSON, not an HTML error page.
+app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    res.status(400).json({ error: 'Invalid JSON' })
+    return
+  }
+  next(err)
 })
 
 function parseSnapshot(value: unknown): StoredSnapshot | null {

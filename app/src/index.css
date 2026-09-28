@@ -21,3 +21,12 @@ body {
   color: var(--color-body);
   line-height: 1.65;
 }
+
+/* Consistent keyboard focus for native controls that do not carry the
+   branded button/input rings (checkboxes, radios, selects). */
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--color-secondary);
+  outline-offset: 2px;
+}
