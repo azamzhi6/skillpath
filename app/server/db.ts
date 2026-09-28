@@ -2,6 +2,7 @@
 // better-sqlite3, local file only. No ORM, no migrations framework.
 
 import Database from 'better-sqlite3'
+import { randomUUID } from 'node:crypto'
 import { readFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -164,6 +165,9 @@ export function loadSnapshot(): StoredSnapshot | null {
 
 export function clearAll(): void {
   const clear = db.transaction(() => {
+    db.prepare('DELETE FROM capability_evidence WHERE goal_id = ?').run('goal-demo')
+    db.prepare('DELETE FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = ?)').run('goal-demo')
+    db.prepare('DELETE FROM submissions WHERE goal_id = ?').run('goal-demo')
     db.prepare('DELETE FROM progress WHERE goal_id = ?').run('goal-demo')
     db.prepare('DELETE FROM paths WHERE goal_id = ?').run('goal-demo')
     db.prepare('DELETE FROM diagnostics WHERE goal_id = ?').run('goal-demo')
@@ -172,6 +176,111 @@ export function clearAll(): void {
   clear()
 }
 
+export interface NewSubmission {
+  stageId: string
+  kind: 'practice' | 'capability'
+  response: string
+  verdict: 'satisfactory' | 'retry' | 'remedial'
+  strengths: string
+  improvements: string
+  nextAction: string
+}
+
+export interface StoredSubmission {
+  id: string
+  stageId: string
+  kind: string
+  response: string
+  attempt: number
+  createdAt: string
+}
+
+export interface StoredFeedback {
+  submissionId: string
+  verdict: string
+  strengths: string
+  improvements: string
+  nextAction: string
+}
+
+export interface StoredEvidence {
+  id: string
+  submissionId: string
+  capability: string
+  result: string
+  evidence: string
+  demonstratedAt: string
+}
+
+export interface LearningBlock {
+  submissions: StoredSubmission[]
+  feedback: StoredFeedback[]
+  evidence: StoredEvidence[]
+}
+
+const insertSubmission = db.transaction((s: NewSubmission, now: string): { id: string; attempt: number } => {
+  const count = db
+    .prepare(
+      'SELECT COUNT(*) AS n FROM submissions WHERE goal_id = ? AND stage_id = ? AND kind = ?',
+    )
+    .get('goal-demo', s.stageId, s.kind) as { n: number }
+  const id = randomUUID()
+  const attempt = count.n + 1
+  db.prepare(
+    `INSERT INTO submissions (id, goal_id, stage_id, kind, response, attempt, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, 'goal-demo', s.stageId, s.kind, s.response, attempt, now)
+  db.prepare(
+    `INSERT INTO feedback (id, submission_id, verdict, strengths, improvements, next_action, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(randomUUID(), id, s.verdict, s.strengths, s.improvements, s.nextAction, now)
+  return { id, attempt }
+})
+
+export function saveSubmission(s: NewSubmission): { id: string; attempt: number } {
+  return insertSubmission(s, new Date().toISOString())
+}
+
+export function saveEvidence(
+  submissionId: string,
+  capability: string,
+  result: string,
+  evidence: string,
+): string {
+  const id = randomUUID()
+  db.prepare(
+    `INSERT INTO capability_evidence (id, goal_id, submission_id, capability, result, evidence, demonstrated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, 'goal-demo', submissionId, capability, result, evidence, new Date().toISOString())
+  return id
+}
+
+export function loadLearning(): LearningBlock {
+  const submissions = db
+    .prepare(
+      'SELECT id, stage_id AS stageId, kind, response, attempt, created_at AS createdAt FROM submissions WHERE goal_id = ? ORDER BY created_at, rowid',
+    )
+    .all('goal-demo') as StoredSubmission[]
+  const feedback = db
+    .prepare(
+      'SELECT submission_id AS submissionId, verdict, strengths, improvements, next_action AS nextAction FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = ?)',
+    )
+    .all('goal-demo') as StoredFeedback[]
+  const evidence = db
+    .prepare(
+      'SELECT id, submission_id AS submissionId, capability, result, evidence, demonstrated_at AS demonstratedAt FROM capability_evidence WHERE goal_id = ? ORDER BY demonstrated_at DESC, rowid DESC',
+    )
+    .all('goal-demo') as StoredEvidence[]
+  return { submissions, feedback, evidence }
+}
+
 export function dbFilePath(): string {
   return dbPath
+}
+
+export function journeyExists(): boolean {
+  const row = db
+    .prepare('SELECT 1 AS ok FROM goals WHERE id = ?')
+    .get('goal-demo') as { ok: number } | undefined
+  return row !== undefined
 }

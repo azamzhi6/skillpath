@@ -1,25 +1,38 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  capabilityTask,
   clarifySummary,
   detectTemplate,
   diagnosticQuestions,
   diagnosticScore,
+  evaluateCapability,
+  evaluatePractice,
   generatePath,
   nextStage,
+  stageLearn,
 } from './mockCoach'
 import {
   apiHealth,
+  clearActivityUi,
   clearRemoteState,
+  fetchLearning,
   fetchRemoteState,
   isOfflineError,
+  loadActivityUi,
   localStorageAdapter,
+  postSubmission,
   pushRemoteState,
+  saveActivityUi,
   type ApiJourneySnapshot,
+  type CapabilityEvidence,
+  type LearningFeedback,
+  type LearningSubmission,
 } from './storage'
 import type {
   Clarification,
   DiagnosticAnswer,
   LearnerState,
+  PathStage,
   Step,
 } from './types'
 
@@ -32,6 +45,24 @@ const EXPERIENCE_OPTIONS = [
 const HOURS_OPTIONS = ['2 hours', '4 hours', '6+ hours']
 
 type PersistenceMode = 'checking' | 'api' | 'offline'
+
+type ActivityView = 'learn' | 'practice' | 'feedback'
+
+function encodeList(items: string[]): string {
+  return JSON.stringify(items)
+}
+
+function decodeList(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === 'string')
+    }
+  } catch {
+    // fall through to plain-text fallback
+  }
+  return value ? [value] : []
+}
 
 // Translate UI state into the snapshot shape stored by the thin API/SQLite.
 function buildSnapshot(state: LearnerState): ApiJourneySnapshot {
@@ -80,6 +111,15 @@ export default function App() {
   const [restored, setRestored] = useState(false)
   const [apiMode, setApiMode] = useState<PersistenceMode>('checking')
   const [saving, setSaving] = useState(false)
+  // Phase 5 learning loop: selected activity, draft (local only), submissions.
+  const [activityStageId, setActivityStageId] = useState<string | null>(null)
+  const [activityView, setActivityView] = useState<ActivityView>('learn')
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [subs, setSubs] = useState<LearningSubmission[]>([])
+  const [fbMap, setFbMap] = useState<Record<string, LearningFeedback>>({})
+  const [evidenceList, setEvidenceList] = useState<CapabilityEvidence[]>([])
 
   function applyState(saved: LearnerState) {
     setGoalText(saved.goalText)
@@ -131,11 +171,33 @@ export default function App() {
         } catch (err: unknown) {
           if (!cancelled && isOfflineError(err)) setApiMode('offline')
         }
+        if (!cancelled) {
+          try {
+            const block = await fetchLearning()
+            if (cancelled) return
+            setSubs(block.submissions)
+            const map: Record<string, LearningFeedback> = {}
+            for (const f of block.feedback) map[f.submissionId] = f
+            setFbMap(map)
+            setEvidenceList(block.evidence)
+          } catch {
+            // Learning history is best-effort; the journey snapshot above
+            // is what the path view needs.
+          }
+        }
       } else {
         setApiMode('offline')
       }
       if (cancelled) return
       if (local && local.goalText.trim()) applyState(local)
+      const activity = loadActivityUi()
+      if (!cancelled) {
+        if (activity.stageId) {
+          setActivityStageId(activity.stageId)
+          setActivityView('learn')
+        }
+        if (activity.drafts) setDrafts(activity.drafts)
+      }
     }
     void init()
     return () => {
@@ -168,6 +230,12 @@ export default function App() {
     }
   }, [goalText, clarification, answers, completedStageIds, step, restored, apiMode])
 
+  // Activity UI (selected stage + per-stage drafts) persists in localStorage
+  // only — drafts are never sent to SQLite; only submitted work persists.
+  useEffect(() => {
+    saveActivityUi({ stageId: activityStageId, drafts })
+  }, [activityStageId, drafts])
+
   const template = useMemo(() => detectTemplate(goalText), [goalText])
   const questions = useMemo(() => diagnosticQuestions(template), [template])
   const path = useMemo(() => {
@@ -176,6 +244,20 @@ export default function App() {
   }, [step, goalText, clarification, answers])
   const next = path ? nextStage(path, completedStageIds) : null
   const allDone = path !== null && next === null
+  // Capability unlocks only through satisfactory practice per stage —
+  // manual checkbox ticks never unlock it (correction 3).
+  const activeStage =
+    path?.stages.find((s) => s.id === activityStageId) ?? null
+  const capabilityUnlocked =
+    path !== null &&
+    path.stages.length > 0 &&
+    path.stages.every((s) => stageSatisfactory(s.id))
+  const latestEvidence = evidenceList.length > 0 ? evidenceList[0] : null
+  const capabilitySubs = subs.filter((s) => s.kind === 'capability')
+  const capabilityLatest = capabilitySubs[capabilitySubs.length - 1] ?? null
+  const capabilityFeedback = capabilityLatest
+    ? (fbMap[capabilityLatest.id] ?? null)
+    : null
 
   function submitGoal() {
     if (goalText.trim().length < 4) {
@@ -206,11 +288,195 @@ export default function App() {
     )
   }
 
+  // ---- Phase 5 learning loop (evaluation centralized in mockCoach) ----
+
+  function stagePracticeSubs(stageId: string): LearningSubmission[] {
+    return subs.filter((s) => s.stageId === stageId && s.kind === 'practice')
+  }
+
+  function stageSatisfactory(stageId: string): boolean {
+    return stagePracticeSubs(stageId).some(
+      (s) => fbMap[s.id]?.verdict === 'satisfactory',
+    )
+  }
+
+  function stageAttempts(stageId: string): number {
+    return stagePracticeSubs(stageId).length
+  }
+
+  function openStage(stageId: string) {
+    setActivityStageId(stageId)
+    setActivityView('learn')
+    setSubmitError(null)
+  }
+
+  function closeActivity() {
+    setActivityStageId(null)
+    setActivityView('learn')
+    setSubmitError(null)
+  }
+
+  async function submitPractice(stageId: string) {
+    const text = (drafts[stageId] ?? '').trim()
+    if (text === '') {
+      setSubmitError('Write your practice response before submitting.')
+      return
+    }
+    if (apiMode !== 'api') {
+      setSubmitError(
+        'The API is unavailable — reconnect to submit. Your draft is saved.',
+      )
+      return
+    }
+    setSubmitError(null)
+    setSubmitting(true)
+    try {
+      const evaluation = evaluatePractice(
+        template,
+        text,
+        stageAttempts(stageId) + 1,
+      )
+      const result = await postSubmission({
+        stageId,
+        kind: 'practice',
+        response: text,
+        verdict: evaluation.verdict,
+        strengths: encodeList(evaluation.strengths),
+        improvements: encodeList(evaluation.improvements),
+        nextAction: evaluation.nextAction,
+      })
+      const sub: LearningSubmission = {
+        id: result.submissionId,
+        stageId,
+        kind: 'practice',
+        response: text,
+        attempt: result.attempt,
+      }
+      setSubs((prev) => [...prev, sub])
+      setFbMap((prev) => ({
+        ...prev,
+        [result.submissionId]: {
+          submissionId: result.submissionId,
+          verdict: result.verdict,
+          strengths: encodeList(evaluation.strengths),
+          improvements: encodeList(evaluation.improvements),
+          nextAction: evaluation.nextAction,
+        },
+      }))
+      if (
+        result.verdict === 'satisfactory' &&
+        !completedStageIds.includes(stageId)
+      ) {
+        // Satisfactory practice completes the stage (progress PUT follows
+        // automatically through the existing save effect).
+        setCompletedStageIds((prev) => [...prev, stageId])
+      }
+      setDrafts((prev) => {
+        const next = { ...prev }
+        delete next[stageId]
+        return next
+      })
+      setActivityView('feedback')
+    } catch {
+      setSubmitError('Could not save your submission. Check the API and try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function submitCapability() {
+    const stageId = 'capability'
+    const text = (drafts[stageId] ?? '').trim()
+    if (text === '') {
+      setSubmitError('Describe what you produced before submitting.')
+      return
+    }
+    if (apiMode !== 'api' || !path) {
+      setSubmitError(
+        'The API is unavailable — reconnect to submit. Your draft is saved.',
+      )
+      return
+    }
+    setSubmitError(null)
+    setSubmitting(true)
+    try {
+      const evaluation = evaluateCapability(template, path.outcome, text)
+      const result = await postSubmission({
+        stageId,
+        kind: 'capability',
+        response: text,
+        verdict: evaluation.satisfactory ? 'satisfactory' : 'retry',
+        strengths: encodeList(evaluation.strengths),
+        improvements: encodeList(evaluation.improvements),
+        nextAction: evaluation.satisfactory
+          ? 'Your capability is recorded below.'
+          : 'Strengthen the weak areas above and submit again.',
+        evidence: evaluation.satisfactory
+          ? {
+              capability: evaluation.capability,
+              result: evaluation.result,
+              evidence: evaluation.evidence,
+            }
+          : null,
+      })
+      const sub: LearningSubmission = {
+        id: result.submissionId,
+        stageId,
+        kind: 'capability',
+        response: text,
+        attempt: result.attempt,
+      }
+      setSubs((prev) => [...prev, sub])
+      setFbMap((prev) => ({
+        ...prev,
+        [result.submissionId]: {
+          submissionId: result.submissionId,
+          verdict: result.verdict,
+          strengths: encodeList(evaluation.strengths),
+          improvements: encodeList(evaluation.improvements),
+          nextAction: evaluation.satisfactory
+            ? 'Your capability is recorded below.'
+            : 'Strengthen the weak areas above and submit again.',
+        },
+      }))
+      setDrafts((prev) => {
+        const next = { ...prev }
+        delete next[stageId]
+        return next
+      })
+      // Refresh evidence from SQLite (server is source of truth).
+      try {
+        const block = await fetchLearning()
+        setSubs(block.submissions)
+        const map: Record<string, LearningFeedback> = {}
+        for (const f of block.feedback) map[f.submissionId] = f
+        setFbMap(map)
+        setEvidenceList(block.evidence)
+      } catch {
+        // Submission already saved locally in state above.
+      }
+      setActivityView('feedback')
+    } catch {
+      setSubmitError('Could not save your submission. Check the API and try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   function restart() {
     localStorageAdapter.clear()
+    clearActivityUi()
     clearRemoteState().catch(() => {
       // Offline: local copy is already cleared.
     })
+    setSubs([])
+    setFbMap({})
+    setEvidenceList([])
+    setActivityStageId(null)
+    setActivityView('learn')
+    setDrafts({})
+    setSubmitError(null)
+    setSubmitting(false)
     setGoalText('')
     setGoalError(null)
     setClarification({
@@ -221,6 +487,177 @@ export default function App() {
     setCompletedStageIds([])
     setRestored(false)
     setStep('goal')
+  }
+
+  function renderActivityPanel(stage: PathStage) {
+    const learn = stageLearn(stage)
+    const attempts = stageAttempts(stage.id)
+    const stageSubs = stagePracticeSubs(stage.id)
+    const latestSub = stageSubs[stageSubs.length - 1] ?? null
+    const latestFb = latestSub ? (fbMap[latestSub.id] ?? null) : null
+    const done = stageSatisfactory(stage.id)
+    const draft = drafts[stage.id] ?? ''
+    return (
+      <section
+        aria-label={`Learning activity: ${stage.title}`}
+        className="rounded-2xl border border-line bg-white p-6"
+      >
+        <button
+          type="button"
+          onClick={closeActivity}
+          className="mb-3 rounded-[10px] border-2 border-line bg-white px-4 py-1.5 text-sm font-semibold text-muted hover:border-primary hover:text-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+        >
+          ← Back to path
+        </button>
+        <span className="mb-2 ml-2 inline-block rounded-full bg-[#E7F4EE] px-2.5 py-0.5 text-xs font-semibold text-primary-dark">
+          {done
+            ? 'Stage completed through practice ✓'
+            : attempts > 0
+              ? `Attempt ${attempts} submitted`
+              : 'Not attempted yet'}
+        </span>
+        <h2 className="text-[22px] font-bold leading-snug tracking-tight text-ink">
+          {stage.title}
+        </h2>
+        <p className="mb-4 mt-1 text-[15px] leading-relaxed text-muted">
+          {stage.kind} · ~{stage.minutes} min
+        </p>
+
+        {activityView === 'learn' && (
+          <div>
+            <h3 className="text-lg font-bold leading-snug text-ink">Learn</h3>
+            <p className="mt-1 text-[15px] leading-relaxed">
+              <strong>Objective:</strong> {learn.objective}
+            </p>
+            <p className="mt-2 text-[15px] leading-relaxed">{learn.content}</p>
+            <p className="mt-2 text-[15px] leading-relaxed text-muted">
+              {learn.example}
+            </p>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setActivityView('practice')
+                  setSubmitError(null)
+                }}
+                className="rounded-[10px] bg-primary px-6 py-2.5 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+              >
+                Start practice
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activityView === 'practice' && (
+          <div>
+            <h3 className="text-lg font-bold leading-snug text-ink">Practise</h3>
+            <p className="mt-1 text-[15px] leading-relaxed">{stage.practice}</p>
+            <label
+              htmlFor={`practice-${stage.id}`}
+              className="mb-1.5 mt-3 block text-base font-semibold text-ink"
+            >
+              Your response
+            </label>
+            <textarea
+              id={`practice-${stage.id}`}
+              rows={5}
+              value={draft}
+              onChange={(e) =>
+                setDrafts((prev) => ({ ...prev, [stage.id]: e.target.value }))
+              }
+              placeholder="Explain what you did and why…"
+              className="w-full rounded-lg border-2 border-line bg-white px-3.5 py-2.5 text-base leading-relaxed text-ink placeholder:text-[#8A9494] focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint"
+            />
+            {submitError && (
+              <p role="alert" className="mt-2 text-[15px] font-medium text-red-700">
+                {submitError}
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setActivityView('learn')
+                  setSubmitError(null)
+                }}
+                className="rounded-[10px] border-2 border-primary bg-white px-5 py-2.5 text-base font-semibold text-primary-dark hover:bg-primary-tint focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+              >
+                Back to Learn
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitPractice(stage.id)}
+                disabled={submitting || apiMode !== 'api'}
+                className="rounded-[10px] bg-primary px-6 py-2.5 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? 'Submitting…' : 'Submit practice'}
+              </button>
+            </div>
+            {apiMode !== 'api' && (
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                Submitting needs the local API — your draft is saved.
+              </p>
+            )}
+          </div>
+        )}
+
+        {activityView === 'feedback' && latestSub && latestFb && (
+          <div>
+            <h3 className="text-lg font-bold leading-snug text-ink">Feedback</h3>
+            <p className="mt-1 text-[15px] leading-relaxed text-muted">
+              Attempt {latestSub.attempt} · verdict: {latestFb.verdict}
+            </p>
+            <h4 className="mt-3 text-base font-semibold text-ink">
+              What you did well
+            </h4>
+            <ul className="mt-1 grid gap-1">
+              {decodeList(latestFb.strengths).map((item) => (
+                <li key={item} className="text-[15px] leading-relaxed">
+                  ✓ {item}
+                </li>
+              ))}
+            </ul>
+            <h4 className="mt-3 text-base font-semibold text-ink">
+              What to improve
+            </h4>
+            <ul className="mt-1 grid gap-1">
+              {decodeList(latestFb.improvements).map((item) => (
+                <li key={item} className="text-[15px] leading-relaxed">
+                  → {item}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-[15px] leading-relaxed">
+              <strong>Next:</strong> {latestFb.nextAction}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              {latestFb.verdict === 'satisfactory' ? (
+                <button
+                  type="button"
+                  onClick={closeActivity}
+                  className="rounded-[10px] bg-primary px-6 py-2.5 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+                >
+                  Continue
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivityView('practice')
+                    setSubmitError(null)
+                  }}
+                  className="rounded-[10px] bg-primary px-6 py-2.5 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+                >
+                  {latestFb.verdict === 'remedial'
+                    ? 'Practise again with hints'
+                    : 'Try again'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+    )
   }
 
   return (
@@ -464,6 +901,9 @@ export default function App() {
 
           {step === 'path' && path && (
             <div className="grid gap-6">
+              {activeStage ? (
+                renderActivityPanel(activeStage)
+              ) : (
               <section className="rounded-2xl border border-line bg-white p-6">
                 <span className="mb-2 inline-block rounded-full bg-[#E7F4EE] px-2.5 py-0.5 text-xs font-semibold text-primary-dark">
                   Personalised path · {path.level} · mock
@@ -487,13 +927,14 @@ export default function App() {
                         }`}
                       >
                         <div className="flex items-start gap-3">
-                          <input
-                            id={`stage-${s.id}`}
-                            type="checkbox"
-                            checked={done}
-                            onChange={() => toggleStage(s.id)}
-                            className="mt-1 h-5 w-5 accent-[#0F766E]"
-                          />
+                            <input
+                              id={`stage-${s.id}`}
+                              type="checkbox"
+                              checked={done}
+                              onChange={() => toggleStage(s.id)}
+                              title="Manual prototype override (testing only)"
+                              className="mt-1 h-5 w-5 accent-[#0F766E]"
+                            />
                           <div>
                             <label
                               htmlFor={`stage-${s.id}`}
@@ -521,6 +962,29 @@ export default function App() {
                                 </li>
                               ))}
                             </ul>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openStage(s.id)}
+                                className="rounded-[10px] border-2 border-primary bg-white px-4 py-1.5 text-sm font-semibold text-primary-dark hover:bg-primary-tint focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+                              >
+                                Open learning activity
+                              </button>
+                              {stageSatisfactory(s.id) ? (
+                                <span className="text-sm font-semibold text-primary-dark">
+                                  Satisfactory ✓
+                                </span>
+                              ) : stagePracticeSubs(s.id).length > 0 ? (
+                                <span className="text-sm text-muted">
+                                  Attempt {stagePracticeSubs(s.id).length} ·
+                                  needs work
+                                </span>
+                              ) : (
+                                <span className="text-sm text-muted">
+                                  Not attempted
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </li>
@@ -528,6 +992,87 @@ export default function App() {
                   })}
                 </ol>
               </section>
+              )}
+
+              {capabilityUnlocked && activityStageId === null && (
+                <section
+                  aria-label="Capability demonstration"
+                  className="rounded-2xl border-2 border-primary bg-white p-6"
+                >
+                  <span className="mb-2 inline-block rounded-full bg-[#E7F4EE] px-2.5 py-0.5 text-xs font-semibold text-primary-dark">
+                    Capability demonstration
+                  </span>
+                  <h2 className="text-[22px] font-bold leading-snug tracking-tight text-ink">
+                    {capabilityTask(template, goalText, path.outcome).title}
+                  </h2>
+                  <p className="mb-4 mt-1 text-[15px] leading-relaxed text-muted">
+                    {
+                      capabilityTask(template, goalText, path.outcome)
+                        .instructions
+                    }
+                  </p>
+                  {latestEvidence && (
+                    <p className="mb-4 rounded-xl border border-[#BFE0D2] bg-[#E7F4EE] px-4 py-3 text-[15px] leading-relaxed text-ink">
+                      <strong>Demonstrated ability:</strong>{' '}
+                      {latestEvidence.capability} Evidence demonstrations so
+                      far: {evidenceList.length}.
+                    </p>
+                  )}
+                  {capabilityLatest && capabilityFeedback && (
+                    <div className="mb-4 rounded-xl border border-line bg-surface px-4 py-3">
+                      <p className="text-[15px] leading-relaxed text-ink">
+                        <strong>
+                          Latest result ({capabilityFeedback.verdict}, attempt{' '}
+                          {capabilityLatest.attempt}):
+                        </strong>{' '}
+                        {capabilityFeedback.verdict === 'satisfactory'
+                          ? 'Capability recorded above.'
+                          : decodeList(capabilityFeedback.improvements)[0] ??
+                            'See feedback and try again.'}
+                      </p>
+                    </div>
+                  )}
+                  <label
+                    htmlFor="capability-response"
+                    className="mb-1.5 block text-base font-semibold text-ink"
+                  >
+                    Your demonstration
+                  </label>
+                  <textarea
+                    id="capability-response"
+                    rows={6}
+                    value={drafts['capability'] ?? ''}
+                    onChange={(e) =>
+                      setDrafts((prev) => ({
+                        ...prev,
+                        capability: e.target.value,
+                      }))
+                    }
+                    placeholder="Describe what you produced, the steps you took, and what it demonstrates…"
+                    className="w-full rounded-lg border-2 border-line bg-white px-3.5 py-2.5 text-base leading-relaxed text-ink placeholder:text-[#8A9494] focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint"
+                  />
+                  {submitError && activityStageId === null && (
+                    <p role="alert" className="mt-2 text-[15px] font-medium text-red-700">
+                      {submitError}
+                    </p>
+                  )}
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => void submitCapability()}
+                      disabled={submitting || apiMode !== 'api'}
+                      className="rounded-[10px] bg-primary px-6 py-3 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {submitting ? 'Submitting…' : 'Submit demonstration'}
+                    </button>
+                  </div>
+                  {apiMode !== 'api' && (
+                    <p className="mt-2 text-sm leading-relaxed text-muted">
+                      Submitting needs the local API — your draft is saved.
+                    </p>
+                  )}
+                </section>
+              )}
 
               <section
                 aria-label="Next learning action"
@@ -596,7 +1141,7 @@ export default function App() {
 
         <footer className="mt-8 text-center text-[13px] leading-relaxed text-muted">
           SkillPath prototype — mock coaching, local demo data only. No account,
-          no backend, no external services.
+          no external services. Local SQLite + Express API.
         </footer>
       </div>
     </div>

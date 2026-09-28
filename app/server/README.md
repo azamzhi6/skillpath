@@ -49,9 +49,10 @@ If the database cannot be opened, the API exits with a clear error message.
 ## Endpoints
 
 - `GET /api/health` → `{ ok: true }`
-- `GET /api/state` → `{ state: <journey snapshot> | null }`
+- `GET /api/state` → `{ state: <journey snapshot> | null, learning: { submissions[], feedback[], evidence[] } }`
 - `PUT /api/state` ← `{ state: <journey snapshot> }` (validated, upsert in one transaction; 400 on invalid payload or malformed JSON)
-- `DELETE /api/state` → clears the demo journey
+- `DELETE /api/state` → clears the demo journey including learning-loop rows
+- `POST /api/submissions` ← `{ stageId, kind, response, verdict, strengths, improvements, nextAction, evidence? }` → `{ submission: { id, attempt }, feedback: { verdict }, evidenceId }` (attempt assigned server-side; one transaction; 400 on invalid payload or missing journey)
 
 ## Fresh-install notes (Windows)
 

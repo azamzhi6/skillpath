@@ -38,3 +38,44 @@ CREATE TABLE IF NOT EXISTS progress (
   completed_stage_ids_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- Phase 5 learning loop. Activities are NOT stored: an activity is derived
+-- from a stage in paths.stages_json (stage_id + kind). Only attempts,
+-- evaluations and demonstrated capability persist.
+CREATE TABLE IF NOT EXISTS submissions (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+  stage_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('practice', 'capability')),
+  response TEXT NOT NULL,
+  attempt INTEGER NOT NULL CHECK (attempt >= 1),
+  created_at TEXT NOT NULL,
+  UNIQUE (goal_id, stage_id, kind, attempt)
+);
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  submission_id TEXT NOT NULL UNIQUE REFERENCES submissions(id) ON DELETE CASCADE,
+  verdict TEXT NOT NULL CHECK (verdict IN ('satisfactory', 'retry', 'remedial')),
+  strengths TEXT NOT NULL,
+  improvements TEXT NOT NULL,
+  next_action TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- No UNIQUE on goal_id: a goal may have more than one successful
+-- demonstration. The UI displays the latest successful demonstration.
+CREATE TABLE IF NOT EXISTS capability_evidence (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+  submission_id TEXT NOT NULL UNIQUE REFERENCES submissions(id) ON DELETE CASCADE,
+  capability TEXT NOT NULL,
+  result TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  demonstrated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_goal_stage
+  ON submissions (goal_id, stage_id, kind);
+CREATE INDEX IF NOT EXISTS idx_capability_evidence_goal
+  ON capability_evidence (goal_id, demonstrated_at);

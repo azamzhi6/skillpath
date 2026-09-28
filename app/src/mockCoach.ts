@@ -388,3 +388,183 @@ export function generatePath(
 export function nextStage(path: LearningPath, completedIds: string[]) {
   return path.stages.find((s) => !completedIds.includes(s.id)) ?? null
 }
+
+// ---- Phase 5: deterministic learning-loop evaluation (mock) ----
+// Centralized evaluators. The UI calls these and uses the result; no
+// evaluation rules live anywhere else. No LLM, no external calls.
+
+export type PracticeVerdict = 'satisfactory' | 'retry' | 'remedial'
+
+export interface PracticeEvaluation {
+  verdict: PracticeVerdict
+  strengths: string[]
+  improvements: string[]
+  nextAction: string
+}
+
+export interface StageLearnContent {
+  objective: string
+  content: string
+  example: string
+}
+
+export interface CapabilityTask {
+  title: string
+  instructions: string
+}
+
+export interface CapabilityEvaluation {
+  satisfactory: boolean
+  strengths: string[]
+  improvements: string[]
+  capability: string
+  result: string
+  evidence: string
+}
+
+const PRACTICE_KEYWORDS: Record<TemplateId, string[]> = {
+  excel: ['sumifs', 'xlookup', 'pivot', 'clean', 'chart', 'margin', 'formula'],
+  web: ['html', 'css', 'responsive', 'layout', 'heading', 'link', 'publish'],
+  data: ['clean', 'missing', 'chart', 'average', 'dataset', 'insight', 'visual'],
+  generic: ['learn', 'practice', 'example', 'plan', 'goal', 'result', 'steps'],
+}
+
+const PRACTICE_MIN_LENGTH = 20
+const PRACTICE_MIN_HITS = 2
+const CAPABILITY_MIN_LENGTH = 60
+const CAPABILITY_MIN_HITS = 3
+
+function keywordHits(template: TemplateId, response: string): string[] {
+  const text = response.toLowerCase()
+  return PRACTICE_KEYWORDS[template].filter((kw) => text.includes(kw))
+}
+
+function missingKeywords(template: TemplateId, response: string): string[] {
+  const text = response.toLowerCase()
+  return PRACTICE_KEYWORDS[template].filter((kw) => !text.includes(kw))
+}
+
+export function stageLearn(stage: PathStage): StageLearnContent {
+  const byKind: Record<PathStage['kind'], string> = {
+    Learn: `Read the explanation below, then study the worked example before you try anything yourself.`,
+    See: `Watch how the task is done in the example first — notice each step, then reproduce it.`,
+    Practise: `Try the task with guidance. Compare your attempt with the example as you go.`,
+    Produce: `Produce the result independently, as you would in real work.`,
+  }
+  const resource = stage.resources[0]
+  return {
+    objective: stage.description,
+    content: `${stage.description} ${byKind[stage.kind]} Allow about ${stage.minutes} minutes.`,
+    example: resource
+      ? `Worked example — ${resource.title} (${resource.source}): ${resource.why}`
+      : `Worked example: follow the practice task below step by step.`,
+  }
+}
+
+export function evaluatePractice(
+  template: TemplateId,
+  response: string,
+  attempt: number,
+): PracticeEvaluation {
+  const trimmed = response.trim()
+  const hits = keywordHits(template, trimmed)
+  const missing = missingKeywords(template, trimmed)
+  if (trimmed.length >= PRACTICE_MIN_LENGTH && hits.length >= PRACTICE_MIN_HITS) {
+    return {
+      verdict: 'satisfactory',
+      strengths: hits
+        .slice(0, 2)
+        .map((kw) => `Good use of "${kw}" — applied in the right context.`),
+      improvements: [
+        'Keep this standard on the next stage: show your method, not just the answer.',
+      ],
+      nextAction: 'Continue to the next stage.',
+    }
+  }
+  const improvements: string[] = []
+  if (trimmed.length < PRACTICE_MIN_LENGTH) {
+    improvements.push(
+      `Your response is quite short (${trimmed.length} characters). Aim for at least ${PRACTICE_MIN_LENGTH} characters explaining what you did and why.`,
+    )
+  }
+  if (missing.length > 0) {
+    improvements.push(
+      `Try including ${missing
+        .slice(0, 2)
+        .map((kw) => `"${kw}"`)
+        .join(' and ')} — they show the key ideas of this stage.`,
+    )
+  }
+  if (attempt >= 2) {
+    return {
+      verdict: 'remedial',
+      strengths:
+        hits.length > 0
+          ? [`You correctly brought in "${hits[0]}" — build on that.`]
+          : ['You attempted the task — that is the right starting point.'],
+      improvements: [
+        ...improvements,
+        `Remedial hint: a strong answer mentions ${PRACTICE_KEYWORDS[template]
+          .slice(0, 3)
+          .map((kw) => `"${kw}"`)
+          .join(', ')}. Keep practising — submit again when ready.`,
+      ],
+      nextAction: 'Practise again with the hints above, then submit.',
+    }
+  }
+  return {
+    verdict: 'retry',
+    strengths:
+      hits.length > 0
+        ? [`Good use of "${hits[0]}" — applied in the right context.`]
+        : ['You made an attempt — a good start.'],
+    improvements,
+    nextAction: 'Try the practice again, then submit.',
+  }
+}
+
+export function capabilityTask(
+  template: TemplateId,
+  goalText: string,
+  outcome: string,
+): CapabilityTask {
+  void template
+  return {
+    title: 'Final capability demonstration',
+    instructions: `Show what you can now do. Goal: ${goalText.trim()} Expected outcome: ${outcome} Describe what you produced, the steps you took, and what the result demonstrates. Aim for at least ${CAPABILITY_MIN_LENGTH} characters.`,
+  }
+}
+
+export function evaluateCapability(
+  template: TemplateId,
+  outcome: string,
+  response: string,
+): CapabilityEvaluation {
+  const trimmed = response.trim()
+  const hits = keywordHits(template, trimmed)
+  const satisfactory =
+    trimmed.length >= CAPABILITY_MIN_LENGTH && hits.length >= CAPABILITY_MIN_HITS
+  const strengths = satisfactory
+    ? hits
+        .slice(0, 3)
+        .map((kw) => `Demonstrated "${kw}" in a realistic context.`)
+    : hits.length > 0
+      ? [`You demonstrated "${hits[0]}" — extend this across the whole task.`]
+      : ['You described an attempt — now connect it to the outcome.']
+  const improvements = satisfactory
+    ? ['Keep a copy of this work as portfolio evidence.']
+    : [
+        `Aim for at least ${CAPABILITY_MIN_LENGTH} characters covering the full outcome, including ${missingKeywords(template, trimmed)
+          .slice(0, 2)
+          .map((kw) => `"${kw}"`)
+          .join(' and ')}.`,
+      ]
+  return {
+    satisfactory,
+    strengths,
+    improvements,
+    capability: outcome,
+    result: satisfactory ? 'satisfactory' : 'needs-work',
+    evidence: trimmed.slice(0, 500),
+  }
+}

@@ -1,7 +1,7 @@
 # SkillPath prototype (local)
 
-**Status: Phase 3 — Progress Persistence & Data Layer is implemented.**
-Next planned phase: **Phase 4 — Prototype Hardening & Handoff** (not implemented).
+**Status: Phase 5 — Learning Loop is implemented.**
+Next planned phase: **Phase 6+ / future MVP** (not planned yet).
 
 Working SkillPath page with mock coaching logic. Persistence is a thin local
 Express API backed by SQLite (`better-sqlite3`); browser localStorage remains
@@ -40,9 +40,28 @@ Database file: `app/server/data/skillpath.db` (gitignored, created on first run)
 ## Flow
 
 Goal → Clarification → Quick diagnostic → Personalised path → Next action.
+Open any stage for the learning loop: Learn → Practise → Submit → Feedback →
+Retry/Continue → next stage. After all stages are satisfactory, a final
+capability demonstration records persistent evidence of ability.
 Progress persists in local SQLite via the thin Express API (`storage.ts`
 adapter seam); browser localStorage (`skillpath.prototype.v1`) is kept only as
 an offline fallback and as the one-time migration source.
+
+## Learning loop (Phase 5)
+
+- Each path stage opens a Learn view (objective, content, worked example,
+  resource) derived from the existing stage data — no content system.
+- Practice is a text response (no uploads). Submitting persists the attempt;
+  the deterministic `mockCoach` evaluator returns satisfactory / retry /
+  remedial with strengths, improvements and a next action.
+- Satisfactory practice auto-completes the stage. A second failed attempt
+  produces remedial hints; the learner can always keep practising.
+- Manual stage checkboxes remain only as a prototype override — they do not
+  unlock capability demonstration. Capability unlocks only when every stage
+  has a satisfactory practice result.
+- The final capability task is evaluated deterministically; success writes a
+  `capability_evidence` row (multiple demonstrations per goal are allowed;
+  the UI shows the latest).
 
 ## Build check
 
@@ -72,6 +91,12 @@ npm.cmd run build
 - Empty goal shows an error and stays put; 1–3 character goals stay
   local-only and never flip a healthy API offline.
 - Partial diagnostic + refresh resumes at the diagnostic step.
+- Learning loop: open a stage → Learn renders → Practice renders → enter a
+  response → submit persists → weak response retries → second failure shows
+  remedial hints → good response completes the stage and advances Next Action.
+- Ticking checkboxes alone never unlocks capability demonstration.
+- Complete all stages satisfactorily → capability task appears → submit →
+  evidence banner appears and survives API restart.
 - API down (stop `dev:api`) → “Using offline copy (API unreachable).”,
   flow keeps working; restart API → saves resume.
 - Malformed `PUT` body → JSON 400 (`Invalid state snapshot` / `Invalid JSON`).
@@ -80,7 +105,9 @@ npm.cmd run build
 ## Known limitations
 
 - Single demo learner and single active goal; no accounts.
-- Deterministic mock coach (4 templates); no real AI.
+- Deterministic mock coach (4 templates) and mock evaluation; no real AI.
+- Submitting needs the local API; offline mode keeps the journey readable
+  but disables Submit (no offline queue).
 - Browser mirror is a fallback copy, not a sync protocol.
 - `vite preview` serves the build without the `/api` proxy, so it runs in
   offline mode by design.

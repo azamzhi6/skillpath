@@ -150,3 +150,144 @@ export async function pushRemoteState(
 export async function clearRemoteState(): Promise<void> {
   await requestJson('/api/state', { method: 'DELETE' })
 }
+
+// ---- Phase 5: activity UI state (drafts live here, localStorage only) ----
+// Draft responses are never sent to SQLite; only submitted work persists.
+
+const ACTIVITY_KEY = 'skillpath.activity.v1'
+
+export interface ActivityUi {
+  stageId: string | null
+  drafts: Record<string, string>
+}
+
+export function loadActivityUi(): ActivityUi {
+  try {
+    const raw = window.localStorage.getItem(ACTIVITY_KEY)
+    if (!raw) return { stageId: null, drafts: {} }
+    const parsed = JSON.parse(raw) as Partial<ActivityUi>
+    const drafts: Record<string, string> = {}
+    if (parsed.drafts && typeof parsed.drafts === 'object') {
+      for (const [key, value] of Object.entries(parsed.drafts)) {
+        if (typeof value === 'string') drafts[key] = value
+      }
+    }
+    return {
+      stageId: typeof parsed.stageId === 'string' ? parsed.stageId : null,
+      drafts,
+    }
+  } catch {
+    return { stageId: null, drafts: {} }
+  }
+}
+
+export function saveActivityUi(ui: ActivityUi): void {
+  try {
+    window.localStorage.setItem(ACTIVITY_KEY, JSON.stringify(ui))
+  } catch {
+    // ignore
+  }
+}
+
+export function clearActivityUi(): void {
+  try {
+    window.localStorage.removeItem(ACTIVITY_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+// ---- Phase 5: learning-loop persistence ----
+
+export interface LearningSubmission {
+  id: string
+  stageId: string
+  kind: string
+  response: string
+  attempt: number
+}
+
+export interface LearningFeedback {
+  submissionId: string
+  verdict: string
+  strengths: string
+  improvements: string
+  nextAction: string
+}
+
+export interface CapabilityEvidence {
+  id: string
+  submissionId: string
+  capability: string
+  result: string
+  evidence: string
+}
+
+export interface LearningBlock {
+  submissions: LearningSubmission[]
+  feedback: LearningFeedback[]
+  evidence: CapabilityEvidence[]
+}
+
+export interface SubmissionResult {
+  submissionId: string
+  attempt: number
+  verdict: string
+  evidenceId: string | null
+}
+
+export async function fetchLearning(): Promise<LearningBlock> {
+  const data = (await requestJson('/api/state')) as {
+    learning?: LearningBlock | null
+  }
+  const block = data.learning
+  if (!block || typeof block !== 'object') {
+    return { submissions: [], feedback: [], evidence: [] }
+  }
+  return {
+    submissions: Array.isArray(block.submissions) ? block.submissions : [],
+    feedback: Array.isArray(block.feedback) ? block.feedback : [],
+    evidence: Array.isArray(block.evidence) ? block.evidence : [],
+  }
+}
+
+export interface NewSubmissionPayload {
+  stageId: string
+  kind: 'practice' | 'capability'
+  response: string
+  verdict: string
+  strengths: string
+  improvements: string
+  nextAction: string
+  evidence?: { capability: string; result: string; evidence: string } | null
+}
+
+export async function postSubmission(
+  payload: NewSubmissionPayload,
+): Promise<SubmissionResult> {
+  const data = (await requestJson('/api/submissions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })) as {
+    submission?: { id?: unknown; attempt?: unknown }
+    feedback?: { verdict?: unknown }
+    evidenceId?: unknown
+  }
+  if (
+    !data.submission ||
+    typeof data.submission.id !== 'string' ||
+    typeof data.submission.attempt !== 'number' ||
+    !data.feedback ||
+    typeof data.feedback.verdict !== 'string'
+  ) {
+    throw new Error('API returned an invalid submission result')
+  }
+  return {
+    submissionId: data.submission.id,
+    attempt: data.submission.attempt,
+    verdict: data.feedback.verdict,
+    evidenceId:
+      typeof data.evidenceId === 'string' ? data.evidenceId : null,
+  }
+}

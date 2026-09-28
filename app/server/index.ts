@@ -7,8 +7,13 @@ import type { NextFunction, Request, Response } from 'express'
 import {
   clearAll,
   dbFilePath,
+  journeyExists,
+  loadLearning,
   loadSnapshot,
+  saveEvidence,
   saveSnapshot,
+  saveSubmission,
+  type NewSubmission,
   type StoredSnapshot,
 } from './db.ts'
 
@@ -21,7 +26,7 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.get('/api/state', (_req, res) => {
-  res.json({ state: loadSnapshot() })
+  res.json({ state: loadSnapshot(), learning: loadLearning() })
 })
 
 app.put('/api/state', (req, res) => {
@@ -39,6 +44,109 @@ app.delete('/api/state', (_req, res) => {
   clearAll()
   res.json({ ok: true })
 })
+
+const SUBMISSION_KINDS = ['practice', 'capability'] as const
+const SUBMISSION_VERDICTS = ['satisfactory', 'retry', 'remedial'] as const
+
+app.post('/api/submissions', (req, res) => {
+  try {
+    if (!journeyExists()) {
+      res.status(400).json({ error: 'No active learning journey' })
+      return
+    }
+    const parsed = parseSubmission(req.body)
+    if (!parsed) {
+      res.status(400).json({ error: 'Invalid submission' })
+      return
+    }
+    const { id, attempt } = saveSubmission(parsed.submission)
+    let evidenceId: string | null = null
+    if (parsed.evidence) {
+      evidenceId = saveEvidence(
+        id,
+        parsed.evidence.capability,
+        parsed.evidence.result,
+        parsed.evidence.evidence,
+      )
+    }
+    res.json({
+      submission: { id, attempt },
+      feedback: { verdict: parsed.submission.verdict },
+      evidenceId,
+    })
+  } catch {
+    res.status(500).json({ error: 'Could not save submission' })
+  }
+})
+
+interface ParsedSubmission {
+  submission: NewSubmission
+  evidence: { capability: string; result: string; evidence: string } | null
+}
+
+function isNonEmptyString(value: unknown, maxLen: number): value is string {
+  return (
+    typeof value === 'string' && value.length >= 1 && value.length <= maxLen
+  )
+}
+
+function parseSubmission(value: unknown): ParsedSubmission | null {
+  if (typeof value !== 'object' || value === null) return null
+  const s = value as Record<string, unknown>
+  if (typeof s.stageId !== 'string' || s.stageId.trim() === '') return null
+  if (
+    typeof s.kind !== 'string' ||
+    !(SUBMISSION_KINDS as readonly string[]).includes(s.kind)
+  ) {
+    return null
+  }
+  if (!isNonEmptyString(s.response, 4000)) return null
+  if (
+    typeof s.verdict !== 'string' ||
+    !(SUBMISSION_VERDICTS as readonly string[]).includes(s.verdict)
+  ) {
+    return null
+  }
+  if (
+    typeof s.strengths !== 'string' ||
+    typeof s.improvements !== 'string' ||
+    typeof s.nextAction !== 'string' ||
+    s.strengths.length > 2000 ||
+    s.improvements.length > 2000 ||
+    s.nextAction.length > 2000
+  ) {
+    return null
+  }
+  let evidence: ParsedSubmission['evidence'] = null
+  if (s.evidence !== undefined && s.evidence !== null) {
+    if (typeof s.evidence !== 'object') return null
+    const e = s.evidence as Record<string, unknown>
+    if (
+      !isNonEmptyString(e.capability, 500) ||
+      !isNonEmptyString(e.result, 100) ||
+      !isNonEmptyString(e.evidence, 2000)
+    ) {
+      return null
+    }
+    evidence = {
+      capability: e.capability,
+      result: e.result,
+      evidence: e.evidence,
+    }
+  }
+  return {
+    submission: {
+      stageId: s.stageId,
+      kind: s.kind as NewSubmission['kind'],
+      response: s.response as string,
+      verdict: s.verdict as NewSubmission['verdict'],
+      strengths: s.strengths as string,
+      improvements: s.improvements as string,
+      nextAction: s.nextAction as string,
+    },
+    evidence,
+  }
+}
 
 // Malformed JSON should answer JSON, not an HTML error page.
 app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
