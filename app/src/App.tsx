@@ -3,10 +3,18 @@ import {
   clarifySummary,
   detectTemplate,
   diagnosticQuestions,
+  diagnosticScore,
   generatePath,
   nextStage,
 } from './mockCoach'
-import { localStorageAdapter } from './storage'
+import {
+  apiHealth,
+  clearRemoteState,
+  fetchRemoteState,
+  localStorageAdapter,
+  pushRemoteState,
+  type ApiJourneySnapshot,
+} from './storage'
 import type {
   Clarification,
   DiagnosticAnswer,
@@ -21,6 +29,36 @@ const EXPERIENCE_OPTIONS = [
 ]
 
 const HOURS_OPTIONS = ['2 hours', '4 hours', '6+ hours']
+
+type PersistenceMode = 'checking' | 'api' | 'offline'
+
+// Translate UI state into the snapshot shape stored by the thin API/SQLite.
+function buildSnapshot(state: LearnerState): ApiJourneySnapshot {
+  const template = detectTemplate(state.goalText)
+  const { score, level } = diagnosticScore(template, state.answers)
+  const hasPath = state.clarification !== null && state.answers.length > 0
+  const path = hasPath
+    ? generatePath(
+        state.goalText,
+        state.clarification ?? { experience: '', hoursPerWeek: '' },
+        state.answers,
+      )
+    : null
+  return {
+    goalText: state.goalText,
+    template,
+    experience: state.clarification?.experience ?? '',
+    hoursPerWeek: state.clarification?.hoursPerWeek ?? '',
+    answers: state.answers,
+    score,
+    level,
+    pathTitle: path ? path.title : '',
+    pathOutcome: path ? path.outcome : '',
+    pathLevel: path ? path.level : level,
+    stages: path ? path.stages : [],
+    completedStageIds: state.completedStageIds,
+  }
+}
 
 const inputClass =
   'w-full rounded-lg border-2 border-line bg-white px-3.5 py-3 text-[17px] font-medium leading-normal text-ink placeholder:text-[#8A9494] focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint'
@@ -39,22 +77,60 @@ export default function App() {
   const [answers, setAnswers] = useState<DiagnosticAnswer[]>([])
   const [completedStageIds, setCompletedStageIds] = useState<string[]>([])
   const [restored, setRestored] = useState(false)
+  const [apiMode, setApiMode] = useState<PersistenceMode>('checking')
+  const [saving, setSaving] = useState(false)
 
-  // Restore a previous local session once on load.
+  function applyState(saved: LearnerState) {
+    setGoalText(saved.goalText)
+    if (saved.clarification) setClarification(saved.clarification)
+    setAnswers(saved.answers)
+    setCompletedStageIds(saved.completedStageIds)
+    if (saved.clarification && saved.answers.length > 0) setStep('path')
+    else if (saved.clarification) setStep('diagnostic')
+    setRestored(true)
+  }
+
+  // Restore once on load: SQLite/API first, one-time localStorage migration,
+  // offline local copy when the API is unreachable.
   useEffect(() => {
-    const saved = localStorageAdapter.load()
-    if (saved && saved.goalText.trim()) {
-      setGoalText(saved.goalText)
-      if (saved.clarification) setClarification(saved.clarification)
-      setAnswers(saved.answers)
-      setCompletedStageIds(saved.completedStageIds)
-      if (saved.clarification && saved.answers.length > 0) setStep('path')
-      else if (saved.clarification) setStep('diagnostic')
-      setRestored(true)
+    let cancelled = false
+    async function init() {
+      const local = localStorageAdapter.load()
+      const healthy = await apiHealth()
+      if (cancelled) return
+      if (healthy) {
+        setApiMode('api')
+        try {
+          const remote = await fetchRemoteState()
+          if (cancelled) return
+          if (remote && remote.goalText.trim()) {
+            applyState(remote)
+            return
+          }
+          if (local && local.goalText.trim()) {
+            applyState(local)
+            await pushRemoteState(buildSnapshot(local)).catch(() => {
+              if (!cancelled) setApiMode('offline')
+            })
+            return
+          }
+        } catch {
+          if (!cancelled) setApiMode('offline')
+        }
+      } else {
+        setApiMode('offline')
+      }
+      if (cancelled) return
+      if (local && local.goalText.trim()) applyState(local)
+    }
+    void init()
+    return () => {
+      cancelled = true
     }
   }, [])
 
-  // Persist progress locally (adapter seam — SQLite lands here in Phase 3).
+  // Persist progress: always mirror locally; write through to SQLite/API
+  // while it is healthy (local copy doubles as the offline fallback).
   useEffect(() => {
     if (!restored && goalText.trim() === '') return
     const state: LearnerState = {
@@ -63,8 +139,18 @@ export default function App() {
       answers,
       completedStageIds,
     }
-    if (goalText.trim() !== '') localStorageAdapter.save(state)
-  }, [goalText, clarification, answers, completedStageIds, step, restored])
+    if (goalText.trim() === '') return
+    localStorageAdapter.save(state)
+    if (apiMode === 'api') {
+      setSaving(true)
+      pushRemoteState(buildSnapshot(state))
+        .then(() => setSaving(false))
+        .catch(() => {
+          setSaving(false)
+          setApiMode('offline')
+        })
+    }
+  }, [goalText, clarification, answers, completedStageIds, step, restored, apiMode])
 
   const template = useMemo(() => detectTemplate(goalText), [goalText])
   const questions = useMemo(() => diagnosticQuestions(template), [template])
@@ -106,6 +192,9 @@ export default function App() {
 
   function restart() {
     localStorageAdapter.clear()
+    clearRemoteState().catch(() => {
+      // Offline: local copy is already cleared.
+    })
     setGoalText('')
     setGoalError(null)
     setClarification({
@@ -143,6 +232,14 @@ export default function App() {
             build your path and always show the next step.
           </p>
         </header>
+
+        <div aria-live="polite" className="mb-4 text-[13px] leading-relaxed text-muted">
+          {apiMode === 'api' && saving
+            ? 'Saving…'
+            : apiMode === 'offline'
+              ? 'Using offline copy (API unreachable).'
+              : null}
+        </div>
 
         <main>
           {step === 'goal' && (

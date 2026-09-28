@@ -51,9 +51,9 @@ authorised by this decision.
 
 ## Task 1 — Implementation Plan
 
-Ordered prototype phases with each phase's objective and concrete output. No
-Phase 3 backend is built yet; progress persists in the browser behind the
-storage-adapter seam.
+Ordered prototype phases with each phase's objective and concrete output. Phase 3
+backend is now implemented (SQLite + thin Express API); the browser copy
+remains as an offline fallback.
 
 **Phase 0 — Baseline & Guardrails**
 

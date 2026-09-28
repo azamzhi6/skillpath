@@ -136,6 +136,20 @@ function scoreAnswers(
   )
 }
 
+export type CoachLevel = 'Starting out' | 'Developing'
+
+export function levelForScore(score: number): CoachLevel {
+  return score >= 3 ? 'Developing' : 'Starting out'
+}
+
+export function diagnosticScore(
+  template: TemplateId,
+  answers: DiagnosticAnswer[],
+): { score: number; level: CoachLevel } {
+  const score = scoreAnswers(template, answers)
+  return { score, level: levelForScore(score) }
+}
+
 interface PathTemplate {
   title: string
   outcome: string
@@ -357,8 +371,7 @@ export function generatePath(
 ): LearningPath {
   const template = detectTemplate(goalText)
   const base = PATHS[template]
-  const score = scoreAnswers(template, answers)
-  const level = score >= 3 ? 'Developing' : 'Starting out'
+  const { level } = diagnosticScore(template, answers)
   // Mock adaptation: developing learners skip the gentlest intro wording.
   const stages =
     level === 'Developing'

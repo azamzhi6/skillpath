@@ -15,3 +15,6 @@ app/node_modules/
 app/dist/
 app/dist-ssr/
 *.local
+
+# Phase 3 local SQLite database (never commit demo data)
+app/server/data/
