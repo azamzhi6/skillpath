@@ -6,6 +6,7 @@ import type {
   DiagnosticAnswer,
   LearningPath,
   PathStage,
+  StageCriterion,
 } from './types'
 
 export type TemplateId = 'excel' | 'web' | 'data' | 'generic'
@@ -168,6 +169,26 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Learn',
         description: 'Structure, formatting and validation for reliable sheets.',
         practice: 'Format and validate a 50-row sales table.',
+        criteria: [
+          {
+            id: 'excel-s1-structure',
+            label: 'Set up a clear table structure',
+            groups: [['table', 'header', 'column', 'row', 'format']],
+          },
+          {
+            id: 'excel-s1-validation',
+            label: 'Add validation to catch bad entries',
+            groups: [['valid', 'validation', 'check', 'rule', 'error']],
+          },
+          {
+            id: 'excel-s1-application',
+            label: 'Apply the setup to the sales data',
+            groups: [
+              ['sales', 'data', 'rows'],
+              ['format', 'clean', 'enter', 'type'],
+            ],
+          },
+        ],
         minutes: 20,
         resources: [
           {
@@ -183,6 +204,26 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Practise',
         description: 'SUMIFS and XLOOKUP applied to real sales questions.',
         practice: 'Answer three margin questions with SUMIFS and XLOOKUP.',
+        criteria: [
+          {
+            id: 'excel-s2-conditional',
+            label: 'Use conditional sums for the margin questions',
+            groups: [['sumifs', 'sum if', 'conditional sum', 'total']],
+          },
+          {
+            id: 'excel-s2-lookup',
+            label: 'Use lookups to pull in related values',
+            groups: [['xlookup', 'vlookup', 'lookup']],
+          },
+          {
+            id: 'excel-s2-application',
+            label: 'Tie both formulas to the margin data',
+            groups: [
+              ['sumifs', 'xlookup', 'formula'],
+              ['margin', 'sales', 'month', 'data'],
+            ],
+          },
+        ],
         minutes: 25,
         resources: [
           {
@@ -198,6 +239,28 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Produce',
         description: 'Summarise margins by month and present the story.',
         practice: 'Produce a one-page monthly margin summary with a chart.',
+        criteria: [
+          {
+            id: 'excel-s3-summary',
+            label: 'Summarise the data by month',
+            groups: [
+              ['pivot', 'month', 'summary', 'summarise', 'summarize', 'total'],
+            ],
+          },
+          {
+            id: 'excel-s3-visual',
+            label: 'Show the result visually',
+            groups: [['chart', 'graph', 'visual', 'plot']],
+          },
+          {
+            id: 'excel-s3-story',
+            label: 'Present the margin story on one page',
+            groups: [
+              ['margin', 'profit', 'sales'],
+              ['page', 'report', 'present'],
+            ],
+          },
+        ],
         minutes: 30,
         resources: [
           {
@@ -219,6 +282,23 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Learn',
         description: 'HTML structure: headings, sections, links and images.',
         practice: 'Mark up a one-section page outline in HTML.',
+        criteria: [
+          {
+            id: 'web-s1-structure',
+            label: 'Structure the page with headings',
+            groups: [['heading', 'h1', 'h2', 'title', 'structure']],
+          },
+          {
+            id: 'web-s1-media',
+            label: 'Include links or images',
+            groups: [['link', 'image', 'img', 'anchor', 'href', 'src']],
+          },
+          {
+            id: 'web-s1-outline',
+            label: 'Outline a complete section',
+            groups: [['section', 'outline', 'page', 'content']],
+          },
+        ],
         minutes: 20,
         resources: [
           {
@@ -234,6 +314,23 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'See',
         description: 'CSS layout, spacing and readable type.',
         practice: 'Style your outline into a clean single-column layout.',
+        criteria: [
+          {
+            id: 'web-s2-styling',
+            label: 'Apply CSS styling to the outline',
+            groups: [['css', 'style', 'stylesheet', 'class']],
+          },
+          {
+            id: 'web-s2-layout',
+            label: 'Control the layout and spacing',
+            groups: [['layout', 'spacing', 'margin', 'padding', 'column']],
+          },
+          {
+            id: 'web-s2-type',
+            label: 'Make the text readable',
+            groups: [['font', 'readable', 'color', 'colour', 'size', 'type']],
+          },
+        ],
         minutes: 25,
         resources: [
           {
@@ -249,6 +346,23 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Produce',
         description: 'Responsive tweaks, then explain your choices.',
         practice: 'Make it mobile-friendly and record a 2-minute walkthrough.',
+        criteria: [
+          {
+            id: 'web-s3-mobile',
+            label: 'Adapt the page for mobile screens',
+            groups: [['mobile', 'responsive']],
+          },
+          {
+            id: 'web-s3-explain',
+            label: 'Explain the choices made',
+            groups: [['explain', 'walkthrough', 'choice', 'because', 'reason']],
+          },
+          {
+            id: 'web-s3-share',
+            label: 'Share or publish the result',
+            groups: [['publish', 'share', 'link', 'deploy', 'upload']],
+          },
+        ],
         minutes: 30,
         resources: [
           {
@@ -270,6 +384,26 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Learn',
         description: 'Rows, columns, types and what “clean” means.',
         practice: 'Profile a sample health-programme dataset: types and gaps.',
+        criteria: [
+          {
+            id: 'data-s1-types',
+            label: 'Identify the column types in the dataset',
+            groups: [['type', 'column', 'number', 'text', 'date', 'category']],
+          },
+          {
+            id: 'data-s1-gaps',
+            label: 'Spot gaps and missing values',
+            groups: [['missing', 'gap', 'empty', 'null', 'incomplete']],
+          },
+          {
+            id: 'data-s1-grounding',
+            label: 'Ground the profile in the health data',
+            groups: [
+              ['health', 'patient', 'programme', 'program', 'dataset', 'data'],
+              ['profile', 'inspect', 'check', 'look', 'describe'],
+            ],
+          },
+        ],
         minutes: 20,
         resources: [
           {
@@ -285,6 +419,26 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Practise',
         description: 'Handle missing and inconsistent values deliberately.',
         practice: 'Clean the dataset and log every decision you made.',
+        criteria: [
+          {
+            id: 'data-s2-problems',
+            label: 'Handle the problem values in the data',
+            groups: [['clean', 'missing', 'duplicate', 'fix', 'remove', 'fill']],
+          },
+          {
+            id: 'data-s2-log',
+            label: 'Log each decision made while cleaning',
+            groups: [['log', 'decision', 'record', 'note', 'document', 'why']],
+          },
+          {
+            id: 'data-s2-usable',
+            label: 'Leave the data fit for analysis',
+            groups: [
+              ['analysis', 'result', 'use', 'valid', 'consistent'],
+              ['clean', 'keep'],
+            ],
+          },
+        ],
         minutes: 30,
         resources: [
           {
@@ -300,6 +454,27 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Produce',
         description: 'Descriptive summary plus one honest chart.',
         practice: 'Produce a one-page finding with a chart and two caveats.',
+        criteria: [
+          {
+            id: 'data-s3-finding',
+            label: 'State the main finding from the data',
+            groups: [
+              ['finding', 'summary', 'result', 'insight', 'average', 'total'],
+            ],
+          },
+          {
+            id: 'data-s3-chart',
+            label: 'Support the finding with a chart',
+            groups: [['chart', 'graph', 'visual', 'plot', 'figure']],
+          },
+          {
+            id: 'data-s3-caveats',
+            label: 'Give at least two caveats on the finding',
+            groups: [
+              ['caveat', 'limit', 'warning', 'caution', 'assumption', 'bias'],
+            ],
+          },
+        ],
         minutes: 30,
         resources: [
           {
@@ -321,6 +496,26 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Learn',
         description: 'The core ideas behind your goal, in plain language.',
         practice: 'Explain the three key ideas back in your own words.',
+        criteria: [
+          {
+            id: 'gen-s1-ideas',
+            label: 'Name the key ideas',
+            groups: [['idea', 'concept', 'key', 'principle', 'three']],
+          },
+          {
+            id: 'gen-s1-own-words',
+            label: 'Explain the ideas in your own words',
+            groups: [['explain', 'because', 'means', 'example', 'understand']],
+          },
+          {
+            id: 'gen-s1-goal',
+            label: 'Connect the ideas to the learning goal',
+            groups: [
+              ['goal', 'learn', 'task'],
+              ['plan', 'apply', 'use'],
+            ],
+          },
+        ],
         minutes: 20,
         resources: [
           {
@@ -336,6 +531,23 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'See',
         description: 'A worked example you can follow step by step.',
         practice: 'Reproduce the worked example with your own data.',
+        criteria: [
+          {
+            id: 'gen-s2-steps',
+            label: 'Follow the steps of the worked example',
+            groups: [['example', 'step', 'follow', 'reproduce', 'copy']],
+          },
+          {
+            id: 'gen-s2-own-data',
+            label: 'Use your own data in the reproduction',
+            groups: [['own', 'data', 'my', 'real']],
+          },
+          {
+            id: 'gen-s2-outcome',
+            label: 'Show what came out of the reproduction',
+            groups: [['result', 'outcome', 'produce', 'complete', 'work']],
+          },
+        ],
         minutes: 25,
         resources: [
           {
@@ -351,6 +563,25 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         kind: 'Produce',
         description: 'Independent practice on a task that matters to you.',
         practice: 'Complete your task and note what you would improve.',
+        criteria: [
+          {
+            id: 'gen-s3-complete',
+            label: 'Complete the task itself',
+            groups: [['complete', 'finish', 'done', 'produce', 'task']],
+          },
+          {
+            id: 'gen-s3-review',
+            label: 'Judge what worked and what did not',
+            groups: [
+              ['improve', 'better', 'weak', 'strong', 'review', 'reflect', 'wrong'],
+            ],
+          },
+          {
+            id: 'gen-s3-next',
+            label: 'State a concrete next step',
+            groups: [['next', 'plan', 'practise', 'practice', 'continue', 'again']],
+          },
+        ],
         minutes: 30,
         resources: [
           {
@@ -430,26 +661,49 @@ const PRACTICE_KEYWORDS: Record<TemplateId, string[]> = {
 }
 
 const PRACTICE_MIN_LENGTH = 20
-const PRACTICE_MIN_HITS = 2
 const CAPABILITY_MIN_LENGTH = 60
 const CAPABILITY_MIN_HITS = 3
 
-// Learner-facing view of the deterministic rules above. The UI derives its
+// Learner-facing view of the deterministic rules. The UI derives its
 // displayed criteria from these functions so there is exactly one
-// authoritative definition of what "satisfactory" checks. No scoring logic
-// lives here beyond re-exposing the existing constants and keyword lists.
+// authoritative definition of what "satisfactory" checks.
 export interface AssessmentCriteria {
   minLength: number
   minHits: number
   keywords: string[]
 }
 
-export function practiceCriteria(template: TemplateId): AssessmentCriteria {
-  return {
-    minLength: PRACTICE_MIN_LENGTH,
-    minHits: PRACTICE_MIN_HITS,
-    keywords: PRACTICE_KEYWORDS[template],
-  }
+export interface CriterionResult {
+  id: string
+  label: string
+  met: boolean
+}
+
+export interface StageAssessment {
+  minLength: number
+  criteria: StageCriterion[]
+}
+
+export function stageAssessment(
+  template: TemplateId,
+  stageId: string,
+): StageAssessment {
+  const stage = PATHS[template]?.stages.find((s) => s.id === stageId)
+  return { minLength: PRACTICE_MIN_LENGTH, criteria: stage ? stage.criteria : [] }
+}
+
+export function evaluateCriteria(
+  criteria: StageCriterion[],
+  response: string,
+): CriterionResult[] {
+  const text = response.toLowerCase()
+  return criteria.map((criterion) => ({
+    id: criterion.id,
+    label: criterion.label,
+    met: criterion.groups.every((group) =>
+      group.some((term) => text.includes(term)),
+    ),
+  }))
 }
 
 export function capabilityCriteria(template: TemplateId): AssessmentCriteria {
@@ -489,18 +743,31 @@ export function stageLearn(stage: PathStage): StageLearnContent {
 
 export function evaluatePractice(
   template: TemplateId,
+  stageId: string,
   response: string,
   attempt: number,
 ): PracticeEvaluation {
   const trimmed = response.trim()
-  const hits = keywordHits(template, trimmed)
-  const missing = missingKeywords(template, trimmed)
-  if (trimmed.length >= PRACTICE_MIN_LENGTH && hits.length >= PRACTICE_MIN_HITS) {
+  const { minLength, criteria } = stageAssessment(template, stageId)
+  if (criteria.length === 0) {
+    return {
+      verdict: 'retry',
+      strengths: ['You made an attempt — a good start.'],
+      improvements: [
+        'This activity has no defined requirements yet — try the practice again with more detail.',
+      ],
+      nextAction: 'Try the practice again, then submit.',
+    }
+  }
+  const results = evaluateCriteria(criteria, trimmed)
+  const met = results.filter((r) => r.met)
+  const unmet = results.filter((r) => !r.met)
+  if (unmet.length === 0 && trimmed.length >= minLength) {
     return {
       verdict: 'satisfactory',
-      strengths: hits
+      strengths: met
         .slice(0, 2)
-        .map((kw) => `Good use of "${kw}" — applied in the right context.`),
+        .map((r) => `You addressed "${r.label}".`),
       improvements: [
         'Keep this standard on the next stage: show your method, not just the answer.',
       ],
@@ -508,32 +775,24 @@ export function evaluatePractice(
     }
   }
   const improvements: string[] = []
-  if (trimmed.length < PRACTICE_MIN_LENGTH) {
+  if (trimmed.length < minLength) {
     improvements.push(
-      `Your response is quite short (${trimmed.length} characters). Aim for at least ${PRACTICE_MIN_LENGTH} characters explaining what you did and why.`,
+      `Your response is quite short (${trimmed.length} characters). Aim for at least ${minLength} characters explaining what you did and why.`,
     )
   }
-  if (missing.length > 0) {
-    improvements.push(
-      `Try including ${missing
-        .slice(0, 2)
-        .map((kw) => `"${kw}"`)
-        .join(' and ')} — they show the key ideas of this stage.`,
-    )
+  for (const r of unmet.slice(0, 2)) {
+    improvements.push(`Not yet addressed: ${r.label}.`)
   }
   if (attempt >= 2) {
     return {
       verdict: 'remedial',
       strengths:
-        hits.length > 0
-          ? [`You correctly brought in "${hits[0]}" — build on that.`]
+        met.length > 0
+          ? [`You addressed "${met[0].label}" — build on that.`]
           : ['You attempted the task — that is the right starting point.'],
       improvements: [
         ...improvements,
-        `Remedial hint: a strong answer mentions ${PRACTICE_KEYWORDS[template]
-          .slice(0, 3)
-          .map((kw) => `"${kw}"`)
-          .join(', ')}. Keep practising — submit again when ready.`,
+        'Remedial hint: take each requirement under "For a satisfactory response" in turn and give it a sentence or two. Keep practising — submit again when ready.',
       ],
       nextAction: 'Practise again with the hints above, then submit.',
     }
@@ -541,8 +800,8 @@ export function evaluatePractice(
   return {
     verdict: 'retry',
     strengths:
-      hits.length > 0
-        ? [`Good use of "${hits[0]}" — applied in the right context.`]
+      met.length > 0
+        ? [`You addressed "${met[0].label}" — keep going.`]
         : ['You made an attempt — a good start.'],
     improvements,
     nextAction: 'Try the practice again, then submit.',

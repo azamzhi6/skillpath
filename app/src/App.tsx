@@ -10,7 +10,7 @@ import {
   evaluatePractice,
   generatePath,
   nextStage,
-  practiceCriteria,
+  stageAssessment,
   stageLearn,
 } from './mockCoach'
 import {
@@ -418,6 +418,7 @@ export default function App() {
     try {
       const evaluation = evaluatePractice(
         template,
+        stageId,
         text,
         stageAttempts(stageId) + 1,
       )
@@ -683,18 +684,21 @@ export default function App() {
               <ul className="mt-1 grid list-disc gap-1 pl-5">
                 <li className="text-[15px] leading-relaxed">
                   Explain what you did and why (at least{' '}
-                  {practiceCriteria(template).minLength} characters).
+                  {stageAssessment(template, stage.id).minLength} characters).
                 </li>
-                <li className="text-[15px] leading-relaxed">
-                  Address at least {practiceCriteria(template).minHits} of
-                  these key concepts:{' '}
-                  {practiceCriteria(template).keywords.join(', ')}.
-                </li>
+                {stageAssessment(template, stage.id).criteria.map((criterion) => (
+                  <li
+                    key={criterion.id}
+                    className="text-[15px] leading-relaxed"
+                  >
+                    {criterion.label}.
+                  </li>
+                ))}
               </ul>
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                SkillPath checks the length of your response and whether these
-                key concepts appear — it does not judge correctness, reasoning
-                quality, or factual accuracy.
+                SkillPath checks that your response addresses each requirement
+                above — it does not judge correctness, reasoning quality, or
+                factual accuracy.
               </p>
             </div>
             <label
@@ -1307,8 +1311,7 @@ export default function App() {
                       </li>
                       <li className="text-[15px] leading-relaxed">
                         Cover at least {capabilityCriteria(template).minHits}{' '}
-                        of these key concepts:{' '}
-                        {capabilityCriteria(template).keywords.join(', ')}.
+                        key concepts for your goal in your description.
                       </li>
                     </ul>
                   </div>

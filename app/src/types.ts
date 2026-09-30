@@ -28,6 +28,16 @@ export interface PathStage {
   practice: string
   minutes: number
   resources: CoachResource[]
+  // Explicit task requirements. Each criterion lists term groups; every
+  // group needs at least one hit. Labels are learner-facing and contain
+  // no evaluator keywords.
+  criteria: StageCriterion[]
+}
+
+export interface StageCriterion {
+  id: string
+  label: string
+  groups: string[][]
 }
 
 export interface LearningPath {
