@@ -83,3 +83,25 @@ CREATE INDEX IF NOT EXISTS idx_submissions_goal_stage
   ON submissions (goal_id, stage_id, kind);
 CREATE INDEX IF NOT EXISTS idx_capability_evidence_goal
   ON capability_evidence (goal_id, demonstrated_at);
+
+-- Learner Model Milestone 1: observational memory of deterministic
+-- criterion results. Written only from stored assessment outcomes; never
+-- read by any gating logic. Reset with everything else via clearAll.
+CREATE TABLE IF NOT EXISTS learner_criterion_mastery (
+  id TEXT PRIMARY KEY,
+  template TEXT NOT NULL,
+  stage_id TEXT NOT NULL,
+  criterion_id TEXT NOT NULL,
+  attempts INTEGER NOT NULL CHECK (attempts >= 1),
+  passes INTEGER NOT NULL CHECK (passes >= 0),
+  failures INTEGER NOT NULL CHECK (failures >= 0),
+  consecutive_failures INTEGER NOT NULL CHECK (consecutive_failures >= 0),
+  last_result TEXT NOT NULL CHECK (last_result IN ('pass', 'fail')),
+  first_seen_at TEXT NOT NULL,
+  last_assessed_at TEXT NOT NULL,
+  mastery_status TEXT NOT NULL CHECK (mastery_status IN ('not_started', 'developing', 'demonstrated')),
+  UNIQUE (template, stage_id, criterion_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mastery_template_stage
+  ON learner_criterion_mastery (template, stage_id);

@@ -631,6 +631,9 @@ export interface PracticeEvaluation {
   strengths: string[]
   improvements: string[]
   nextAction: string
+  // Per-criterion outcomes behind this verdict. The UI sends these to the
+  // server for Learner Model memory; the verdict itself is unchanged.
+  results: CriterionResult[]
 }
 
 export interface StageLearnContent {
@@ -706,6 +709,27 @@ export function evaluateCriteria(
   }))
 }
 
+// Remediation focus (display prioritization only — never gating). Given the
+// unmet criterion ids of the latest attempt plus remembered mastery rows,
+// returns the ids to highlight under "Focus next on:": repeatedly struggling
+// criteria first, otherwise all currently unmet criteria.
+export function prioritizeRemediation(
+  unmetIds: string[],
+  mastery: { stageId: string; criterionId: string; consecutiveFailures: number }[],
+  stageId: string,
+): string[] {
+  if (unmetIds.length === 0) return []
+  const repeated = unmetIds.filter((id) =>
+    mastery.some(
+      (row) =>
+        row.stageId === stageId &&
+        row.criterionId === id &&
+        row.consecutiveFailures >= 2,
+    ),
+  )
+  return repeated.length > 0 ? repeated : [...unmetIds]
+}
+
 export function capabilityCriteria(template: TemplateId): AssessmentCriteria {
   return {
     minLength: CAPABILITY_MIN_LENGTH,
@@ -757,6 +781,7 @@ export function evaluatePractice(
         'This activity has no defined requirements yet — try the practice again with more detail.',
       ],
       nextAction: 'Try the practice again, then submit.',
+      results: [],
     }
   }
   const results = evaluateCriteria(criteria, trimmed)
@@ -772,6 +797,7 @@ export function evaluatePractice(
         'Keep this standard on the next stage: show your method, not just the answer.',
       ],
       nextAction: 'Continue to the next stage.',
+      results,
     }
   }
   const improvements: string[] = []
@@ -795,6 +821,7 @@ export function evaluatePractice(
         'Remedial hint: take each requirement under "For a satisfactory response" in turn and give it a sentence or two. Keep practising — submit again when ready.',
       ],
       nextAction: 'Practise again with the hints above, then submit.',
+      results,
     }
   }
   return {
@@ -805,6 +832,7 @@ export function evaluatePractice(
         : ['You made an attempt — a good start.'],
     improvements,
     nextAction: 'Try the practice again, then submit.',
+    results,
   }
 }
 

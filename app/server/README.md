@@ -84,6 +84,18 @@ If the database cannot be opened, the API exits with a clear error message.
   `'mock'` via column default plus migration. The UI labels AI prose and never
   mislabels mock prose.
 
+## Learner Model Milestone 1
+
+- The deterministic evaluator decides results; `learner_criterion_mastery`
+  only remembers per-criterion pass/fail history (attempts, passes, failures,
+  consecutive failures, last result, mastery status). It is never consulted
+  by any verdict, completion, capability, or evidence logic.
+- `POST /api/submissions` accepts additive `criteria: [{ criterionId, met }]`
+  plus `template`; IDs are validated against the submitted stage and unknown
+  IDs reject the submission. The mastery update runs in the same transaction
+  as the submission insert. `GET /api/state` returns current `mastery` rows;
+  reset clears them with everything else.
+
 ## Fresh-install notes (Windows)
 
 - On Windows use `npm.cmd` (PowerShell execution policy blocks `npm.ps1`).

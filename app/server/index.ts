@@ -13,6 +13,7 @@ import {
   journeyExists,
   loadGoalText,
   loadLearning,
+  loadMastery,
   loadSnapshot,
   loadStageInfo,
   saveEvidence,
@@ -22,6 +23,7 @@ import {
   type NewSubmission,
   type StoredSnapshot,
 } from './db.ts'
+import type { CriterionOutcome, MasteryRow } from './mastery.ts'
 
 loadLocalEnv()
 
@@ -172,7 +174,27 @@ app.post('/api/submissions', async (req, res) => {
       res.status(400).json({ error: 'Invalid submission' })
       return
     }
-    const { id, attempt } = saveSubmission(parsed.submission)
+    if (parsed.criteria === null) {
+      res.status(400).json({ error: 'Invalid criterion data' })
+      return
+    }
+    if (parsed.criteria.length > 0) {
+      if (!(KNOWN_TEMPLATES as readonly string[]).includes(parsed.template)) {
+        res.status(400).json({ error: 'Invalid template for criterion data' })
+        return
+      }
+      const stage = loadStageInfo(parsed.submission.stageId)
+      const knownIds = new Set(stage ? stage.criterionIds : [])
+      if (!parsed.criteria.every((c) => knownIds.has(c.criterionId))) {
+        res.status(400).json({ error: 'Unknown criterion ID for stage' })
+        return
+      }
+    }
+    const { id, attempt } = saveSubmission(
+      parsed.submission,
+      parsed.criteria,
+      parsed.template,
+    )
     // Deterministic prose is the default. AI may only reword it; the
     // verdict and all judgments stay exactly as the client evaluated them.
     let strengths = parsed.submission.strengths
@@ -231,6 +253,7 @@ app.post('/api/submissions', async (req, res) => {
         nextAction,
         proseSource,
       },
+      mastery: loadMasteryFor(parsed.template, parsed.submission.stageId),
       evidenceId,
     })
   } catch {
@@ -253,6 +276,8 @@ function decodeList(value: string): string[] {
 interface ParsedSubmission {
   submission: NewSubmission
   evidence: { capability: string; result: string; evidence: string } | null
+  criteria: CriterionOutcome[] | null
+  template: string
 }
 
 function isNonEmptyString(value: unknown, maxLen: number): value is string {
@@ -316,7 +341,39 @@ function parseSubmission(value: unknown): ParsedSubmission | null {
       nextAction: s.nextAction as string,
     },
     evidence,
+    criteria: parseCriteriaList(s.criteria),
+    template: typeof s.template === 'string' ? s.template : '',
   }
+}
+
+const KNOWN_TEMPLATES = ['excel', 'web', 'data', 'generic'] as const
+
+// Optional additive criterion results. Absent (legacy clients) means no
+// mastery update. Present-but-malformed means null, which rejects the whole
+// submission rather than partially recording it.
+function parseCriteriaList(value: unknown): CriterionOutcome[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) return null
+  const outcomes: CriterionOutcome[] = []
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) return null
+    const entry = item as Record<string, unknown>
+    if (
+      typeof entry.criterionId !== 'string' ||
+      entry.criterionId === '' ||
+      typeof entry.met !== 'boolean'
+    ) {
+      return null
+    }
+    outcomes.push({ criterionId: entry.criterionId, met: entry.met })
+  }
+  return outcomes
+}
+
+function loadMasteryFor(template: string, stageId: string): MasteryRow[] {
+  return loadMastery().filter(
+    (row) => row.template === template && row.stageId === stageId,
+  )
 }
 
 // Malformed JSON should answer JSON, not an HTML error page.

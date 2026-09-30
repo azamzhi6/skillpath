@@ -10,8 +10,10 @@ import {
   evaluatePractice,
   generatePath,
   nextStage,
+  prioritizeRemediation,
   stageAssessment,
   stageLearn,
+  type CriterionResult,
 } from './mockCoach'
 import {
   apiHealth,
@@ -30,6 +32,7 @@ import {
   type ApiJourneySnapshot,
   type CapabilityEvidence,
   type LearningFeedback,
+  type LearningMastery,
   type LearningSubmission,
 } from './storage'
 import type {
@@ -38,6 +41,7 @@ import type {
   LearnerState,
   ParsedGoal,
   PathStage,
+  StageCriterion,
   Step,
 } from './types'
 
@@ -138,6 +142,13 @@ export default function App() {
   const [subs, setSubs] = useState<LearningSubmission[]>([])
   const [fbMap, setFbMap] = useState<Record<string, LearningFeedback>>({})
   const [evidenceList, setEvidenceList] = useState<CapabilityEvidence[]>([])
+  // Learner Model Milestone 1: persisted criterion memory. Read-only for
+  // display prioritization; never consulted by any gating logic.
+  const [mastery, setMastery] = useState<LearningMastery[]>([])
+  const [lastResults, setLastResults] = useState<CriterionResult[]>([])
+  const [lastResultsStageId, setLastResultsStageId] = useState<string | null>(
+    null,
+  )
   // Phase 6B: per-stage AI Learn content. Absent/mock entries render the
   // existing deterministic stageLearn() text; only 'ai' entries are labelled.
   const [aiLearn, setAiLearn] = useState<Record<string, AiLearnEntry>>({})
@@ -206,6 +217,7 @@ export default function App() {
             for (const f of block.feedback) map[f.submissionId] = f
             setFbMap(map)
             setEvidenceList(block.evidence)
+            setMastery(block.mastery)
           } catch {
             // Learning history is best-effort; the journey snapshot above
             // is what the path view needs.
@@ -430,7 +442,15 @@ export default function App() {
         strengths: encodeList(evaluation.strengths),
         improvements: encodeList(evaluation.improvements),
         nextAction: evaluation.nextAction,
+        criteria: evaluation.results.map((r) => ({
+          criterionId: r.id,
+          met: r.met,
+        })),
+        template,
       })
+      setMastery(result.mastery)
+      setLastResults(evaluation.results)
+      setLastResultsStageId(stageId)
       const sub: LearningSubmission = {
         id: result.submissionId,
         stageId,
@@ -538,6 +558,7 @@ export default function App() {
         for (const f of block.feedback) map[f.submissionId] = f
         setFbMap(map)
         setEvidenceList(block.evidence)
+        setMastery(block.mastery)
       } catch {
         // Submission already saved locally in state above.
       }
@@ -558,6 +579,9 @@ export default function App() {
     setSubs([])
     setFbMap({})
     setEvidenceList([])
+    setMastery([])
+    setLastResults([])
+    setLastResultsStageId(null)
     setAiLearn({})
     setActivityStageId(null)
     setActivityView('learn')
@@ -592,6 +616,26 @@ export default function App() {
     const showAi =
       aiEntry?.status === 'ai' && aiEntry.explanation && aiEntry.example
     const draft = drafts[stage.id] ?? ''
+    // Remediation focus (display only): unmet criteria from the latest
+    // attempt for THIS stage, prioritized when mastery shows repeated
+    // failure. Never consulted by any gating logic.
+    const focusCriteria = (() => {
+      if (
+        !latestSub ||
+        latestFb?.verdict !== 'remedial' ||
+        lastResultsStageId !== stage.id
+      ) {
+        return []
+      }
+      const unmetIds = lastResults.filter((r) => !r.met).map((r) => r.id)
+      const focusedIds = prioritizeRemediation(unmetIds, mastery, stage.id)
+      const byId = new Map(
+        stageAssessment(template, stage.id).criteria.map((c) => [c.id, c]),
+      )
+      return focusedIds
+        .map((id) => byId.get(id))
+        .filter((c): c is StageCriterion => c !== undefined)
+    })()
     return (
       <section
         aria-label={`Learning activity: ${stage.title}`}
@@ -784,6 +828,23 @@ export default function App() {
             <p className="mt-3 text-[15px] leading-relaxed">
               <strong>Next:</strong> {latestFb.nextAction}
             </p>
+            {latestFb.verdict === 'remedial' && focusCriteria.length > 0 && (
+              <div className="mt-3 rounded-xl border border-line bg-surface p-4">
+                <p className="text-base font-semibold text-ink">
+                  Focus next on:
+                </p>
+                <ul className="mt-1 grid list-disc gap-1 pl-5">
+                  {focusCriteria.map((criterion) => (
+                    <li
+                      key={criterion.id}
+                      className="text-[15px] leading-relaxed"
+                    >
+                      {criterion.label}.
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="mt-4 flex flex-wrap gap-3">
               {latestFb.verdict === 'satisfactory' ? (
                 <button

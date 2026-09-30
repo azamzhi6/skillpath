@@ -6,6 +6,12 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  initialMasteryRow,
+  nextMasteryRow,
+  type CriterionOutcome,
+  type MasteryRow,
+} from './mastery.ts'
 
 export const DEMO_LEARNER_ID = 'demo-learner'
 
@@ -211,6 +217,7 @@ export function loadSnapshot(): StoredSnapshot | null {
 
 export function clearAll(): void {
   const clear = db.transaction(() => {
+    db.prepare('DELETE FROM learner_criterion_mastery').run()
     db.prepare('DELETE FROM capability_evidence WHERE goal_id = ?').run('goal-demo')
     db.prepare('DELETE FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = ?)').run('goal-demo')
     db.prepare('DELETE FROM submissions WHERE goal_id = ?').run('goal-demo')
@@ -263,25 +270,122 @@ export interface LearningBlock {
   submissions: StoredSubmission[]
   feedback: StoredFeedback[]
   evidence: StoredEvidence[]
+  mastery: MasteryRow[]
 }
 
-const insertSubmission = db.transaction((s: NewSubmission, now: string): { id: string; attempt: number } => {
-  const count = db
-    .prepare(
-      'SELECT COUNT(*) AS n FROM submissions WHERE goal_id = ? AND stage_id = ? AND kind = ?',
-    )
-    .get('goal-demo', s.stageId, s.kind) as { n: number }
-  const id = randomUUID()
-  const attempt = count.n + 1
-  db.prepare(
-    `INSERT INTO submissions (id, goal_id, stage_id, kind, response, attempt, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, 'goal-demo', s.stageId, s.kind, s.response, attempt, now)
-  return { id, attempt }
-})
+interface MasteryRowShape {
+  id: string
+  template: string
+  stage_id: string
+  criterion_id: string
+  attempts: number
+  passes: number
+  failures: number
+  consecutive_failures: number
+  last_result: string
+  first_seen_at: string
+  last_assessed_at: string
+  mastery_status: string
+}
 
-export function saveSubmission(s: NewSubmission): { id: string; attempt: number } {
-  return insertSubmission(s, new Date().toISOString())
+function rowToMastery(row: MasteryRowShape): MasteryRow {
+  return {
+    template: row.template,
+    stageId: row.stage_id,
+    criterionId: row.criterion_id,
+    attempts: row.attempts,
+    passes: row.passes,
+    failures: row.failures,
+    consecutiveFailures: row.consecutive_failures,
+    lastResult: row.last_result as MasteryRow['lastResult'],
+    firstSeenAt: row.first_seen_at,
+    lastAssessedAt: row.last_assessed_at,
+    masteryStatus: row.mastery_status as MasteryRow['masteryStatus'],
+  }
+}
+
+// Plain (non-transactional) helper: must run inside the caller's
+// transaction so submission + mastery succeed or fail together.
+function upsertMasteryRow(
+  template: string,
+  stageId: string,
+  outcome: CriterionOutcome,
+  now: string,
+): void {
+  const existing = db
+    .prepare(
+      'SELECT * FROM learner_criterion_mastery WHERE template = ? AND stage_id = ? AND criterion_id = ?',
+    )
+    .get(template, stageId, outcome.criterionId) as MasteryRowShape | undefined
+  const next = existing
+    ? nextMasteryRow(rowToMastery(existing), outcome.met, now)
+    : initialMasteryRow(template, stageId, outcome.criterionId, outcome.met, now)
+  db.prepare(
+    `INSERT INTO learner_criterion_mastery (id, template, stage_id, criterion_id, attempts, passes, failures, consecutive_failures, last_result, first_seen_at, last_assessed_at, mastery_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(template, stage_id, criterion_id) DO UPDATE SET
+       attempts = excluded.attempts,
+       passes = excluded.passes,
+       failures = excluded.failures,
+       consecutive_failures = excluded.consecutive_failures,
+       last_result = excluded.last_result,
+       last_assessed_at = excluded.last_assessed_at,
+       mastery_status = excluded.mastery_status`,
+  ).run(
+    existing ? existing.id : randomUUID(),
+    next.template,
+    next.stageId,
+    next.criterionId,
+    next.attempts,
+    next.passes,
+    next.failures,
+    next.consecutiveFailures,
+    next.lastResult,
+    next.firstSeenAt,
+    next.lastAssessedAt,
+    next.masteryStatus,
+  )
+}
+
+const insertSubmission = db.transaction(
+  (
+    s: NewSubmission,
+    outcomes: CriterionOutcome[],
+    template: string,
+    now: string,
+  ): { id: string; attempt: number } => {
+    const count = db
+      .prepare(
+        'SELECT COUNT(*) AS n FROM submissions WHERE goal_id = ? AND stage_id = ? AND kind = ?',
+      )
+      .get('goal-demo', s.stageId, s.kind) as { n: number }
+    const id = randomUUID()
+    const attempt = count.n + 1
+    db.prepare(
+      `INSERT INTO submissions (id, goal_id, stage_id, kind, response, attempt, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, 'goal-demo', s.stageId, s.kind, s.response, attempt, now)
+    for (const outcome of outcomes) {
+      upsertMasteryRow(template, s.stageId, outcome, now)
+    }
+    return { id, attempt }
+  },
+)
+
+export function saveSubmission(
+  s: NewSubmission,
+  outcomes: CriterionOutcome[],
+  template: string,
+): { id: string; attempt: number } {
+  return insertSubmission(s, outcomes, template, new Date().toISOString())
+}
+
+export function loadMastery(): MasteryRow[] {
+  return (
+    db
+      .prepare('SELECT * FROM learner_criterion_mastery ORDER BY template, stage_id, criterion_id')
+      .all() as MasteryRowShape[]
+  ).map(rowToMastery)
 }
 
 export function saveFeedback(
@@ -337,7 +441,7 @@ export function loadLearning(): LearningBlock {
       'SELECT id, submission_id AS submissionId, capability, result, evidence, demonstrated_at AS demonstratedAt FROM capability_evidence WHERE goal_id = ? ORDER BY demonstrated_at DESC, rowid DESC',
     )
     .all('goal-demo') as StoredEvidence[]
-  return { submissions, feedback, evidence }
+  return { submissions, feedback, evidence, mastery: loadMastery() }
 }
 
 export function dbFilePath(): string {
@@ -362,6 +466,7 @@ export interface StageInfo {
   title: string
   kind: string
   practice: string
+  criterionIds: string[]
 }
 
 export function loadStageInfo(stageId: string): StageInfo | null {
@@ -375,14 +480,25 @@ export function loadStageInfo(stageId: string): StageInfo | null {
       title?: unknown
       kind?: unknown
       practice?: unknown
+      criteria?: unknown
     }[]
     if (!Array.isArray(stages)) return null
     const match = stages.find((s) => s.id === stageId)
     if (!match || typeof match.title !== 'string') return null
+    const criterionIds = Array.isArray(match.criteria)
+      ? match.criteria
+          .filter(
+            (c): c is { id: unknown } =>
+              typeof c === 'object' && c !== null,
+          )
+          .map((c) => c.id)
+          .filter((id): id is string => typeof id === 'string')
+      : []
     return {
       title: match.title,
       kind: typeof match.kind === 'string' ? match.kind : '',
       practice: typeof match.practice === 'string' ? match.practice : '',
+      criterionIds,
     }
   } catch {
     return null

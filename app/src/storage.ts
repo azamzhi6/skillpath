@@ -324,10 +324,28 @@ export interface CapabilityEvidence {
   evidence: string
 }
 
+export interface CriterionOutcome {
+  criterionId: string
+  met: boolean
+}
+
+export interface LearningMastery {
+  template: string
+  stageId: string
+  criterionId: string
+  attempts: number
+  passes: number
+  failures: number
+  consecutiveFailures: number
+  lastResult: string
+  masteryStatus: string
+}
+
 export interface LearningBlock {
   submissions: LearningSubmission[]
   feedback: LearningFeedback[]
   evidence: CapabilityEvidence[]
+  mastery: LearningMastery[]
 }
 
 export interface SubmissionResult {
@@ -338,7 +356,24 @@ export interface SubmissionResult {
   improvements: string
   nextAction: string
   proseSource: string
+  mastery: LearningMastery[]
   evidenceId: string | null
+}
+
+function isMasteryRow(value: unknown): value is LearningMastery {
+  if (typeof value !== 'object' || value === null) return false
+  const row = value as Record<string, unknown>
+  return (
+    typeof row.template === 'string' &&
+    typeof row.stageId === 'string' &&
+    typeof row.criterionId === 'string' &&
+    typeof row.attempts === 'number' &&
+    typeof row.passes === 'number' &&
+    typeof row.failures === 'number' &&
+    typeof row.consecutiveFailures === 'number' &&
+    typeof row.lastResult === 'string' &&
+    typeof row.masteryStatus === 'string'
+  )
 }
 
 export async function fetchLearning(): Promise<LearningBlock> {
@@ -347,12 +382,15 @@ export async function fetchLearning(): Promise<LearningBlock> {
   }
   const block = data.learning
   if (!block || typeof block !== 'object') {
-    return { submissions: [], feedback: [], evidence: [] }
+    return { submissions: [], feedback: [], evidence: [], mastery: [] }
   }
   return {
     submissions: Array.isArray(block.submissions) ? block.submissions : [],
     feedback: Array.isArray(block.feedback) ? block.feedback : [],
     evidence: Array.isArray(block.evidence) ? block.evidence : [],
+    mastery: Array.isArray(block.mastery)
+      ? block.mastery.filter(isMasteryRow)
+      : [],
   }
 }
 
@@ -365,6 +403,8 @@ export interface NewSubmissionPayload {
   improvements: string
   nextAction: string
   evidence?: { capability: string; result: string; evidence: string } | null
+  criteria?: CriterionOutcome[]
+  template?: string
 }
 
 export async function postSubmission(
@@ -383,6 +423,7 @@ export async function postSubmission(
       nextAction?: unknown
       proseSource?: unknown
     }
+    mastery?: unknown
     evidenceId?: unknown
   }
   if (
@@ -406,6 +447,9 @@ export async function postSubmission(
     nextAction: data.feedback.nextAction,
     proseSource:
       data.feedback.proseSource === 'ai' ? 'ai' : 'mock',
+    mastery: Array.isArray(data.mastery)
+      ? data.mastery.filter(isMasteryRow)
+      : [],
     evidenceId:
       typeof data.evidenceId === 'string' ? data.evidenceId : null,
   }
