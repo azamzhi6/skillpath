@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   strengths TEXT NOT NULL,
   improvements TEXT NOT NULL,
   next_action TEXT NOT NULL,
+  prose_source TEXT NOT NULL DEFAULT 'mock' CHECK (prose_source IN ('ai', 'mock')),
   created_at TEXT NOT NULL
 );
 

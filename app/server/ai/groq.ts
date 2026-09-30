@@ -3,9 +3,18 @@
 // GROQ_BASE_URL (default Groq cloud; overridable for tests/proxies),
 // GROQ_TIMEOUT_MS (default 25000).
 
-import { buildLearnMessages } from './prompts.ts'
-import { validateLearnContent, type ValidLearnContent } from './validate.ts'
-import type { AiProvider, LearnRequest } from './provider.ts'
+import { buildFeedbackMessages, buildLearnMessages } from './prompts.ts'
+import {
+  validateFeedbackProse,
+  validateLearnContent,
+  type ValidFeedbackProse,
+  type ValidLearnContent,
+} from './validate.ts'
+import type {
+  AiProvider,
+  FeedbackProseRequest,
+  LearnRequest,
+} from './provider.ts'
 
 const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1'
 const DEFAULT_MODEL = 'openai/gpt-oss-20b'
@@ -69,6 +78,21 @@ export class GroqProvider implements AiProvider {
 
   async generateLearn(request: LearnRequest): Promise<ValidLearnContent | null> {
     const messages = buildLearnMessages(request.input)
+    const body = await this.chatJson(messages.system, messages.user)
+    return extractLearnContent(body)
+  }
+
+  async generateFeedbackProse(
+    request: FeedbackProseRequest,
+  ): Promise<ValidFeedbackProse | null> {
+    const messages = buildFeedbackMessages(request.input)
+    const body = await this.chatJson(messages.system, messages.user)
+    return extractFeedbackContent(body)
+  }
+
+  // Shared Groq chat-completions call. Returns the raw parsed body, or null
+  // on timeout, HTTP error, or malformed JSON. Callers validate shapes.
+  private async chatJson(system: string, user: string): Promise<unknown> {
     let res: Response
     try {
       res = await fetch(`${this.config.baseUrl}/chat/completions`, {
@@ -80,8 +104,8 @@ export class GroqProvider implements AiProvider {
         body: JSON.stringify({
           model: this.config.model,
           messages: [
-            { role: 'system', content: messages.system },
-            { role: 'user', content: messages.user },
+            { role: 'system', content: system },
+            { role: 'user', content: user },
           ],
           temperature: 0.4,
           max_tokens: 2000,
@@ -93,12 +117,26 @@ export class GroqProvider implements AiProvider {
       return null
     }
     if (!res.ok) return null
-    let body: unknown
     try {
-      body = (await res.json()) as unknown
+      return (await res.json()) as unknown
     } catch {
       return null
     }
-    return extractLearnContent(body)
   }
+}
+
+export function extractFeedbackContent(body: unknown): ValidFeedbackProse | null {
+  if (typeof body !== 'object' || body === null) return null
+  const choices = (body as { choices?: { message?: { content?: unknown } }[] })
+    .choices
+  if (!Array.isArray(choices) || choices.length === 0) return null
+  const content = choices[0]?.message?.content
+  if (typeof content !== 'string' || content.trim() === '') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    return null
+  }
+  return validateFeedbackProse(parsed)
 }

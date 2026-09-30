@@ -40,3 +40,49 @@ export function buildLearnMessages(input: LearnPromptInput): {
     ].join('\n'),
   }
 }
+
+// Feedback-prose prompt v1 (R1). A rewrite task, NOT an evaluation: the
+// deterministic verdict and judgments are supplied as meaning anchors the
+// model must preserve, never second-guess.
+
+export const FEEDBACK_PROMPT_VERSION = 'v1'
+
+export interface FeedbackPromptInput {
+  goalText: string
+  stageTitle: string
+  stageKind: string
+  response: string
+  verdict: string
+  strengths: string[]
+  improvements: string[]
+  nextAction: string
+  attempt: number
+}
+
+export const FEEDBACK_SYSTEM_INSTRUCTIONS = [
+  'You are a SkillPath learning coach rewriting feedback for a learner.',
+  'You are given the official verdict and feedback points. Preserve the meaning of every supplied strength, improvement and next action exactly.',
+  'Do not introduce a new judgment. Do not contradict the verdict. Do not invent claims about what the learner did. Do not add new requirements. Do not change any remediation logic.',
+  'Use plain professional language for an adult learner.',
+  'Return ONLY the required JSON object, no other text.',
+].join(' ')
+
+export function buildFeedbackMessages(input: FeedbackPromptInput): {
+  system: string
+  user: string
+} {
+  return {
+    system: FEEDBACK_SYSTEM_INSTRUCTIONS,
+    user: [
+      `Learner goal: ${input.goalText}`,
+      `Stage: ${input.stageTitle} (${input.stageKind}), attempt ${input.attempt}`,
+      `Official verdict (fixed, do not change): ${input.verdict}`,
+      `Learner response: ${input.response}`,
+      `Strengths to preserve: ${input.strengths.join(' | ')}`,
+      `Improvements to preserve: ${input.improvements.join(' | ')}`,
+      `Next action to preserve: ${input.nextAction}`,
+      'Reword the strengths, improvements and next action in clear learner-facing prose.',
+      'Respond with JSON only: {"strengths": ["..."], "improvements": ["..."], "nextAction": "..."}',
+    ].join('\n'),
+  }
+}

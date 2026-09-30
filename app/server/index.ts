@@ -11,9 +11,12 @@ import {
   clearAll,
   dbFilePath,
   journeyExists,
+  loadGoalText,
   loadLearning,
   loadSnapshot,
+  loadStageInfo,
   saveEvidence,
+  saveFeedback,
   saveSnapshot,
   saveSubmission,
   type NewSubmission,
@@ -129,7 +132,7 @@ function parseLearnInput(value: unknown): {
 const SUBMISSION_KINDS = ['practice', 'capability'] as const
 const SUBMISSION_VERDICTS = ['satisfactory', 'retry', 'remedial'] as const
 
-app.post('/api/submissions', (req, res) => {
+app.post('/api/submissions', async (req, res) => {
   try {
     if (!journeyExists()) {
       res.status(400).json({ error: 'No active learning journey' })
@@ -141,6 +144,46 @@ app.post('/api/submissions', (req, res) => {
       return
     }
     const { id, attempt } = saveSubmission(parsed.submission)
+    // Deterministic prose is the default. AI may only reword it; the
+    // verdict and all judgments stay exactly as the client evaluated them.
+    let strengths = parsed.submission.strengths
+    let improvements = parsed.submission.improvements
+    let nextAction = parsed.submission.nextAction
+    let proseSource: 'ai' | 'mock' = 'mock'
+    if (learnProvider && learnProvider.isConfigured()) {
+      try {
+        const stage = loadStageInfo(parsed.submission.stageId)
+        const prose = await learnProvider.generateFeedbackProse({
+          input: {
+            goalText: loadGoalText(),
+            stageTitle: stage?.title ?? parsed.submission.stageId,
+            stageKind: stage?.kind ?? parsed.submission.kind,
+            response: parsed.submission.response,
+            verdict: parsed.submission.verdict,
+            strengths: decodeList(parsed.submission.strengths),
+            improvements: decodeList(parsed.submission.improvements),
+            nextAction: parsed.submission.nextAction,
+            attempt,
+          },
+        })
+        if (prose) {
+          strengths = JSON.stringify(prose.strengths)
+          improvements = JSON.stringify(prose.improvements)
+          nextAction = prose.nextAction
+          proseSource = 'ai'
+        }
+      } catch {
+        // Mock fallback: deterministic prose below is unchanged.
+      }
+    }
+    saveFeedback(
+      id,
+      parsed.submission.verdict,
+      strengths,
+      improvements,
+      nextAction,
+      proseSource,
+    )
     let evidenceId: string | null = null
     if (parsed.evidence) {
       evidenceId = saveEvidence(
@@ -152,13 +195,31 @@ app.post('/api/submissions', (req, res) => {
     }
     res.json({
       submission: { id, attempt },
-      feedback: { verdict: parsed.submission.verdict },
+      feedback: {
+        verdict: parsed.submission.verdict,
+        strengths,
+        improvements,
+        nextAction,
+        proseSource,
+      },
       evidenceId,
     })
   } catch {
     res.status(500).json({ error: 'Could not save submission' })
   }
 })
+
+function decodeList(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === 'string')
+    }
+  } catch {
+    // fall through to plain-text fallback
+  }
+  return value ? [value] : []
+}
 
 interface ParsedSubmission {
   submission: NewSubmission

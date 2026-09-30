@@ -25,3 +25,48 @@ export function validateLearnContent(value: unknown): ValidLearnContent | null {
   }
   return { explanation, example }
 }
+
+// Feedback-prose contract (R1): reworded strengths/improvements/nextAction.
+// Lengths stay inside the existing feedback column budget (2000 chars).
+
+export interface ValidFeedbackProse {
+  strengths: string[]
+  improvements: string[]
+  nextAction: string
+}
+
+export const PROSE_ITEM_MAX = 400
+export const PROSE_LIST_MIN = 1
+export const PROSE_LIST_MAX = 3
+
+function validProseList(value: unknown): value is string[] {
+  if (!Array.isArray(value)) return false
+  if (value.length < PROSE_LIST_MIN || value.length > PROSE_LIST_MAX) {
+    return false
+  }
+  return value.every(
+    (item) =>
+      typeof item === 'string' &&
+      item.trim() !== '' &&
+      item.length <= PROSE_ITEM_MAX,
+  )
+}
+
+export function validateFeedbackProse(value: unknown): ValidFeedbackProse | null {
+  if (typeof value !== 'object' || value === null) return null
+  const obj = value as Record<string, unknown>
+  if (!validProseList(obj.strengths)) return null
+  if (!validProseList(obj.improvements)) return null
+  if (
+    typeof obj.nextAction !== 'string' ||
+    obj.nextAction.trim() === '' ||
+    obj.nextAction.length > PROSE_ITEM_MAX
+  ) {
+    return null
+  }
+  return {
+    strengths: (obj.strengths as string[]).map((s) => s.trim()),
+    improvements: (obj.improvements as string[]).map((s) => s.trim()),
+    nextAction: (obj.nextAction as string).trim(),
+  }
+}

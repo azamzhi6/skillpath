@@ -27,6 +27,17 @@ try {
   db.prepare(
     'INSERT OR IGNORE INTO learners (id, display_name) VALUES (?, ?)',
   ).run(DEMO_LEARNER_ID, 'Demo Learner')
+
+  // Additive R1 migration for pre-existing databases: existing rows behave
+  // as 'mock' via the column default.
+  const feedbackCols = db
+    .prepare(`PRAGMA table_info(feedback)`)
+    .all() as { name: string }[]
+  if (!feedbackCols.some((c) => c.name === 'prose_source')) {
+    db.exec(
+      `ALTER TABLE feedback ADD COLUMN prose_source TEXT NOT NULL DEFAULT 'mock'`,
+    )
+  }
 } catch (err) {
   console.error(
     `SkillPath API cannot start: failed to open the SQLite database at ${dbPath}: ${
@@ -201,6 +212,7 @@ export interface StoredFeedback {
   strengths: string
   improvements: string
   nextAction: string
+  proseSource: string
 }
 
 export interface StoredEvidence {
@@ -230,15 +242,34 @@ const insertSubmission = db.transaction((s: NewSubmission, now: string): { id: s
     `INSERT INTO submissions (id, goal_id, stage_id, kind, response, attempt, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(id, 'goal-demo', s.stageId, s.kind, s.response, attempt, now)
-  db.prepare(
-    `INSERT INTO feedback (id, submission_id, verdict, strengths, improvements, next_action, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(randomUUID(), id, s.verdict, s.strengths, s.improvements, s.nextAction, now)
   return { id, attempt }
 })
 
 export function saveSubmission(s: NewSubmission): { id: string; attempt: number } {
   return insertSubmission(s, new Date().toISOString())
+}
+
+export function saveFeedback(
+  submissionId: string,
+  verdict: NewSubmission['verdict'],
+  strengths: string,
+  improvements: string,
+  nextAction: string,
+  proseSource: 'ai' | 'mock',
+): void {
+  db.prepare(
+    `INSERT INTO feedback (id, submission_id, verdict, strengths, improvements, next_action, prose_source, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    submissionId,
+    verdict,
+    strengths,
+    improvements,
+    nextAction,
+    proseSource,
+    new Date().toISOString(),
+  )
 }
 
 export function saveEvidence(
@@ -263,7 +294,7 @@ export function loadLearning(): LearningBlock {
     .all('goal-demo') as StoredSubmission[]
   const feedback = db
     .prepare(
-      'SELECT submission_id AS submissionId, verdict, strengths, improvements, next_action AS nextAction FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = ?)',
+      'SELECT submission_id AS submissionId, verdict, strengths, improvements, next_action AS nextAction, prose_source AS proseSource FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = ?)',
     )
     .all('goal-demo') as StoredFeedback[]
   const evidence = db
@@ -283,4 +314,42 @@ export function journeyExists(): boolean {
     .prepare('SELECT 1 AS ok FROM goals WHERE id = ?')
     .get('goal-demo') as { ok: number } | undefined
   return row !== undefined
+}
+
+export function loadGoalText(): string {
+  const row = db
+    .prepare('SELECT raw_text AS rawText FROM goals WHERE id = ?')
+    .get('goal-demo') as { rawText: string } | undefined
+  return row ? row.rawText : ''
+}
+
+export interface StageInfo {
+  title: string
+  kind: string
+  practice: string
+}
+
+export function loadStageInfo(stageId: string): StageInfo | null {
+  const row = db
+    .prepare('SELECT stages_json AS stagesJson FROM paths WHERE goal_id = ?')
+    .get('goal-demo') as { stagesJson: string } | undefined
+  if (!row) return null
+  try {
+    const stages = JSON.parse(row.stagesJson) as {
+      id?: unknown
+      title?: unknown
+      kind?: unknown
+      practice?: unknown
+    }[]
+    if (!Array.isArray(stages)) return null
+    const match = stages.find((s) => s.id === stageId)
+    if (!match || typeof match.title !== 'string') return null
+    return {
+      title: match.title,
+      kind: typeof match.kind === 'string' ? match.kind : '',
+      practice: typeof match.practice === 'string' ? match.practice : '',
+    }
+  } catch {
+    return null
+  }
 }

@@ -63,6 +63,9 @@ an offline fallback and as the one-time migration source.
 - The final capability task is evaluated deterministically; success writes a
   `capability_evidence` row (multiple demonstrations per goal are allowed;
   the UI shows the latest).
+- Feedback prose may be AI-reworded (labelled “AI-generated — verify with
+  authoritative sources”); verdicts, adaptation and evidence stay
+  deterministic — AI never decides pass/fail.
 
 ## Real-AI Learn content (Phase 6A–6C, Groq)
 

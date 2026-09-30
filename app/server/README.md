@@ -53,7 +53,7 @@ If the database cannot be opened, the API exits with a clear error message.
 - `GET /api/state` → `{ state: <journey snapshot> | null, learning: { submissions[], feedback[], evidence[] } }`
 - `PUT /api/state` ← `{ state: <journey snapshot> }` (validated, upsert in one transaction; 400 on invalid payload or malformed JSON)
 - `DELETE /api/state` → clears the demo journey including learning-loop rows
-- `POST /api/submissions` ← `{ stageId, kind, response, verdict, strengths, improvements, nextAction, evidence? }` → `{ submission: { id, attempt }, feedback: { verdict }, evidenceId }` (attempt assigned server-side; one transaction; 400 on invalid payload or missing journey)
+- `POST /api/submissions` ← `{ stageId, kind, response, verdict, strengths, improvements, nextAction, evidence? }` → `{ submission: { id, attempt }, feedback: { verdict, strengths, improvements, nextAction, proseSource }, evidenceId }` (attempt assigned server-side; deterministic verdict stored verbatim; when Groq is configured the prose fields are AI rewordings validated server-side with `proseSource: 'ai'`, otherwise the deterministic text with `'mock'`; one transaction per write; 400 on invalid payload or missing journey)
 - `POST /api/learn` ← `{ goalText, outcome, stageTitle, stageKind, stageDescription, practiceTask, level }` → `{ source: 'ai', explanation, example }` or `{ source: 'mock' }` (validated; AI failures fall back to mock, never to learner-facing errors)
 
 ## Real AI (Groq, Phase 6A–6C)
@@ -73,6 +73,15 @@ If the database cannot be opened, the API exits with a clear error message.
   goal-independent cache key would serve identical text to different learners.
   Each stage open performs at most one AI call (~3 per journey); this keeps
   slice 1 simple instead of over-engineered.
+
+## Real-AI feedback prose (R1)
+
+- Deterministic verdicts stay authoritative: the client evaluates with
+  `mockCoach`, the server stores that verdict verbatim, and AI only rewords
+  strengths/improvements/nextAction (prompt `v1` requires preserving meaning).
+- Stored rows carry `prose_source` (`'ai'` or `'mock'`); pre-R1 rows read as
+  `'mock'` via column default plus migration. The UI labels AI prose and never
+  mislabels mock prose.
 
 ## Fresh-install notes (Windows)
 

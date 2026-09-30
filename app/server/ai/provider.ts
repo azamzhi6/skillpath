@@ -2,11 +2,15 @@
 // interface, never on a specific vendor. Swapping providers means adding
 // one adapter file, not rewriting learning logic.
 
-import type { LearnPromptInput } from './prompts.ts'
-import type { ValidLearnContent } from './validate.ts'
+import type { FeedbackPromptInput, LearnPromptInput } from './prompts.ts'
+import type { ValidFeedbackProse, ValidLearnContent } from './validate.ts'
 
 export interface LearnRequest {
   input: LearnPromptInput
+}
+
+export interface FeedbackProseRequest {
+  input: FeedbackPromptInput
 }
 
 export interface AiProvider {
@@ -20,4 +24,12 @@ export interface AiProvider {
    * Must never throw for provider-side problems and never log secrets.
    */
   generateLearn(request: LearnRequest): Promise<ValidLearnContent | null>
+  /**
+   * Reword deterministic feedback prose. The verdict and all judgments stay
+   * deterministic: this only rewrites the supplied strengths, improvements
+   * and next action. Returns null on any provider-side problem.
+   */
+  generateFeedbackProse(
+    request: FeedbackProseRequest,
+  ): Promise<ValidFeedbackProse | null>
 }

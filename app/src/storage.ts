@@ -266,6 +266,8 @@ export interface LearningFeedback {
   strengths: string
   improvements: string
   nextAction: string
+  // Present for rows stored after R1; older rows behave as 'mock'.
+  proseSource?: string
 }
 
 export interface CapabilityEvidence {
@@ -286,6 +288,10 @@ export interface SubmissionResult {
   submissionId: string
   attempt: number
   verdict: string
+  strengths: string
+  improvements: string
+  nextAction: string
+  proseSource: string
   evidenceId: string | null
 }
 
@@ -324,7 +330,13 @@ export async function postSubmission(
     body: JSON.stringify(payload),
   })) as {
     submission?: { id?: unknown; attempt?: unknown }
-    feedback?: { verdict?: unknown }
+    feedback?: {
+      verdict?: unknown
+      strengths?: unknown
+      improvements?: unknown
+      nextAction?: unknown
+      proseSource?: unknown
+    }
     evidenceId?: unknown
   }
   if (
@@ -332,7 +344,10 @@ export async function postSubmission(
     typeof data.submission.id !== 'string' ||
     typeof data.submission.attempt !== 'number' ||
     !data.feedback ||
-    typeof data.feedback.verdict !== 'string'
+    typeof data.feedback.verdict !== 'string' ||
+    typeof data.feedback.strengths !== 'string' ||
+    typeof data.feedback.improvements !== 'string' ||
+    typeof data.feedback.nextAction !== 'string'
   ) {
     throw new Error('API returned an invalid submission result')
   }
@@ -340,6 +355,11 @@ export async function postSubmission(
     submissionId: data.submission.id,
     attempt: data.submission.attempt,
     verdict: data.feedback.verdict,
+    strengths: data.feedback.strengths,
+    improvements: data.feedback.improvements,
+    nextAction: data.feedback.nextAction,
+    proseSource:
+      data.feedback.proseSource === 'ai' ? 'ai' : 'mock',
     evidenceId:
       typeof data.evidenceId === 'string' ? data.evidenceId : null,
   }

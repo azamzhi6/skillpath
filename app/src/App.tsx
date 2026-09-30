@@ -410,9 +410,10 @@ export default function App() {
         [result.submissionId]: {
           submissionId: result.submissionId,
           verdict: result.verdict,
-          strengths: encodeList(evaluation.strengths),
-          improvements: encodeList(evaluation.improvements),
-          nextAction: evaluation.nextAction,
+          strengths: result.strengths,
+          improvements: result.improvements,
+          nextAction: result.nextAction,
+          proseSource: result.proseSource,
         },
       }))
       if (
@@ -484,11 +485,10 @@ export default function App() {
         [result.submissionId]: {
           submissionId: result.submissionId,
           verdict: result.verdict,
-          strengths: encodeList(evaluation.strengths),
-          improvements: encodeList(evaluation.improvements),
-          nextAction: evaluation.satisfactory
-            ? 'Your capability is recorded below.'
-            : 'Strengthen the weak areas above and submit again.',
+          strengths: result.strengths,
+          improvements: result.improvements,
+          nextAction: result.nextAction,
+          proseSource: result.proseSource,
         },
       }))
       setDrafts((prev) => {
@@ -685,6 +685,11 @@ export default function App() {
             <p className="mt-1 text-[15px] leading-relaxed text-muted">
               Attempt {latestSub.attempt} · verdict: {latestFb.verdict}
             </p>
+            {latestFb.proseSource === 'ai' && (
+              <p className="mt-1 text-[13px] leading-relaxed text-muted">
+                AI-generated — verify with authoritative sources
+              </p>
+            )}
             <h4 className="mt-3 text-base font-semibold text-ink">
               What you did well
             </h4>
@@ -1108,6 +1113,11 @@ export default function App() {
                           : decodeList(capabilityFeedback.improvements)[0] ??
                             'See feedback and try again.'}
                       </p>
+                      {capabilityFeedback.proseSource === 'ai' && (
+                        <p className="mt-1 text-[13px] leading-relaxed text-muted">
+                          AI-generated — verify with authoritative sources
+                        </p>
+                      )}
                     </div>
                   )}
                   <label
