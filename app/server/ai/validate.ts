@@ -70,3 +70,51 @@ export function validateFeedbackProse(value: unknown): ValidFeedbackProse | null
     nextAction: (obj.nextAction as string).trim(),
   }
 }
+
+// Goal-parse contract (R2). Interpretation of the learner's own words only;
+// "capability" wording is deliberately avoided to prevent confusion with
+// SkillPath's assessed Capability state.
+
+export interface ValidParsedGoal {
+  subject: string
+  desiredOutcome: string
+  timeframe: string
+}
+
+export const GOAL_SUBJECT_MAX = 120
+export const GOAL_OUTCOME_MAX = 300
+export const GOAL_TIMEFRAMES = [
+  '2 weeks',
+  '1 month',
+  '3 months',
+  'flexible',
+  '',
+] as const
+
+export function validateParsedGoal(value: unknown): ValidParsedGoal | null {
+  if (typeof value !== 'object' || value === null) return null
+  const obj = value as Record<string, unknown>
+  if (
+    typeof obj.subject !== 'string' ||
+    obj.subject.length > GOAL_SUBJECT_MAX
+  ) {
+    return null
+  }
+  if (
+    typeof obj.desiredOutcome !== 'string' ||
+    obj.desiredOutcome.length > GOAL_OUTCOME_MAX
+  ) {
+    return null
+  }
+  if (
+    typeof obj.timeframe !== 'string' ||
+    !(GOAL_TIMEFRAMES as readonly string[]).includes(obj.timeframe)
+  ) {
+    return null
+  }
+  return {
+    subject: obj.subject.trim(),
+    desiredOutcome: obj.desiredOutcome.trim(),
+    timeframe: obj.timeframe,
+  }
+}

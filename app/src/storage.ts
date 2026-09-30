@@ -2,9 +2,27 @@
 // Phase 3 will add a SQLite-backed adapter behind this same interface
 // without changing the UI or mock coach logic.
 
-import type { DiagnosticAnswer, LearnerState } from './types'
+import type {
+  DiagnosticAnswer,
+  LearnerState,
+  ParsedGoal,
+} from './types'
 
 const KEY = 'skillpath.prototype.v1'
+
+function isParsedGoal(value: unknown): value is ParsedGoal {
+  if (typeof value !== 'object' || value === null) return false
+  const g = value as Record<string, unknown>
+  return (
+    typeof g.subject === 'string' &&
+    typeof g.desiredOutcome === 'string' &&
+    typeof g.timeframe === 'string'
+  )
+}
+
+function readParsedGoal(value: unknown): ParsedGoal | null {
+  return isParsedGoal(value) ? value : null
+}
 
 export interface StorageAdapter {
   load(): LearnerState | null
@@ -26,6 +44,9 @@ export const localStorageAdapter: StorageAdapter = {
         completedStageIds: Array.isArray(parsed.completedStageIds)
           ? parsed.completedStageIds
           : [],
+        parsedGoal: readParsedGoal(
+          (parsed as { parsedGoal?: unknown }).parsedGoal,
+        ),
       }
     } catch {
       return null
@@ -64,6 +85,12 @@ export interface ApiJourneySnapshot {
   pathLevel: string
   stages: unknown[]
   completedStageIds: string[]
+  parsedGoal?: ParsedGoal | null
+}
+
+export interface GoalParseResult {
+  source: 'ai' | 'mock'
+  parsed: ParsedGoal | null
 }
 
 async function requestJson(
@@ -125,7 +152,26 @@ export async function fetchRemoteState(): Promise<LearnerState | null> {
     completedStageIds: Array.isArray(s.completedStageIds)
       ? s.completedStageIds.filter((id) => typeof id === 'string')
       : [],
+    parsedGoal: readParsedGoal(s.parsedGoal),
   }
+}
+
+export async function fetchGoalParse(
+  goalText: string,
+): Promise<GoalParseResult> {
+  try {
+    const data = (await requestJson('/api/goal-parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goalText }),
+    })) as { source?: unknown; parsed?: unknown }
+    if (data.source === 'ai' && isParsedGoal(data.parsed)) {
+      return { source: 'ai', parsed: data.parsed }
+    }
+  } catch {
+    // Fall through to mock below.
+  }
+  return { source: 'mock', parsed: null }
 }
 
 function isAnswer(value: unknown): value is DiagnosticAnswer {

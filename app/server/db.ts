@@ -38,6 +38,17 @@ try {
       `ALTER TABLE feedback ADD COLUMN prose_source TEXT NOT NULL DEFAULT 'mock'`,
     )
   }
+
+  // Additive R2 migration: learner-confirmed parsed goal fields. Existing
+  // rows keep NULLs, which the application reads as "not parsed".
+  const goalCols = db
+    .prepare(`PRAGMA table_info(goals)`)
+    .all() as { name: string }[]
+  for (const column of ['subject', 'desired_outcome', 'timeframe']) {
+    if (!goalCols.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE goals ADD COLUMN ${column} TEXT`)
+    }
+  }
 } catch (err) {
   console.error(
     `SkillPath API cannot start: failed to open the SQLite database at ${dbPath}: ${
@@ -60,18 +71,26 @@ export interface StoredSnapshot {
   pathLevel: string
   stages: unknown[]
   completedStageIds: string[]
+  parsedGoal: {
+    subject: string
+    desiredOutcome: string
+    timeframe: string
+  } | null
 }
 
 const upsertState = db.transaction((s: StoredSnapshot, now: string) => {
   const goalId = 'goal-demo'
   db.prepare(
-    `INSERT INTO goals (id, learner_id, raw_text, template, experience, hours_per_week, created_at, updated_at)
-     VALUES (@id, @learnerId, @rawText, @template, @experience, @hoursPerWeek, @now, @now)
+    `INSERT INTO goals (id, learner_id, raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe, created_at, updated_at)
+     VALUES (@id, @learnerId, @rawText, @template, @experience, @hoursPerWeek, @subject, @desiredOutcome, @timeframe, @now, @now)
      ON CONFLICT(id) DO UPDATE SET
        raw_text = excluded.raw_text,
        template = excluded.template,
        experience = excluded.experience,
        hours_per_week = excluded.hours_per_week,
+       subject = excluded.subject,
+       desired_outcome = excluded.desired_outcome,
+       timeframe = excluded.timeframe,
        updated_at = excluded.updated_at`,
   ).run({
     id: goalId,
@@ -80,6 +99,9 @@ const upsertState = db.transaction((s: StoredSnapshot, now: string) => {
     template: s.template,
     experience: s.experience,
     hoursPerWeek: s.hoursPerWeek,
+    subject: s.parsedGoal ? s.parsedGoal.subject : null,
+    desiredOutcome: s.parsedGoal ? s.parsedGoal.desiredOutcome : null,
+    timeframe: s.parsedGoal ? s.parsedGoal.timeframe : null,
     now,
   })
   db.prepare(
@@ -123,6 +145,9 @@ interface GoalRow {
   template: string
   experience: string
   hours_per_week: string
+  subject: string | null
+  desired_outcome: string | null
+  timeframe: string | null
 }
 
 interface DiagnosticRow {
@@ -144,7 +169,7 @@ interface ProgressRow {
 
 export function loadSnapshot(): StoredSnapshot | null {
   const goal = db
-    .prepare('SELECT raw_text, template, experience, hours_per_week FROM goals WHERE id = ?')
+    .prepare('SELECT raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe FROM goals WHERE id = ?')
     .get('goal-demo') as GoalRow | undefined
   if (!goal) return null
   const diagnostic = db
@@ -161,6 +186,16 @@ export function loadSnapshot(): StoredSnapshot | null {
     template: goal.template,
     experience: goal.experience,
     hoursPerWeek: goal.hours_per_week,
+    parsedGoal:
+      goal.subject !== null ||
+      goal.desired_outcome !== null ||
+      goal.timeframe !== null
+        ? {
+            subject: goal.subject ?? '',
+            desiredOutcome: goal.desired_outcome ?? '',
+            timeframe: goal.timeframe ?? '',
+          }
+        : null,
     answers: diagnostic ? (JSON.parse(diagnostic.answers_json) as StoredSnapshot['answers']) : [],
     score: diagnostic ? diagnostic.score : 0,
     level: diagnostic ? diagnostic.level : '',

@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS goals (
   template TEXT NOT NULL,
   experience TEXT NOT NULL,
   hours_per_week TEXT NOT NULL,
+  subject TEXT,
+  desired_outcome TEXT,
+  timeframe TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

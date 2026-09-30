@@ -55,6 +55,7 @@ If the database cannot be opened, the API exits with a clear error message.
 - `DELETE /api/state` → clears the demo journey including learning-loop rows
 - `POST /api/submissions` ← `{ stageId, kind, response, verdict, strengths, improvements, nextAction, evidence? }` → `{ submission: { id, attempt }, feedback: { verdict, strengths, improvements, nextAction, proseSource }, evidenceId }` (attempt assigned server-side; deterministic verdict stored verbatim; when Groq is configured the prose fields are AI rewordings validated server-side with `proseSource: 'ai'`, otherwise the deterministic text with `'mock'`; one transaction per write; 400 on invalid payload or missing journey)
 - `POST /api/learn` ← `{ goalText, outcome, stageTitle, stageKind, stageDescription, practiceTask, level }` → `{ source: 'ai', explanation, example }` or `{ source: 'mock' }` (validated; AI failures fall back to mock, never to learner-facing errors)
+- `POST /api/goal-parse` ← `{ goalText }` (4–500 chars) → `{ source: 'ai', parsed: { subject ≤120, desiredOutcome ≤300, timeframe enum } }` or `{ source: 'mock', parsed: null }` (extraction only — never validates, scores, or judges the goal; 400 on invalid request)
 
 ## Real AI (Groq, Phase 6A–6C)
 

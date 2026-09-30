@@ -40,7 +40,8 @@ Database file: `app/server/data/skillpath.db` (gitignored, created on first run)
 
 ## Flow
 
-Goal → Clarification → Quick diagnostic → Personalised path → Next action.
+Goal → Clarification (with optional AI goal understanding) → Quick
+diagnostic → Personalised path → Next action.
 Open any stage for the learning loop: Learn → Practise → Submit → Feedback →
 Retry/Continue → next stage. After all stages are satisfactory, a final
 capability demonstration records persistent evidence of ability.
@@ -77,6 +78,16 @@ an offline fallback and as the one-time migration source.
   the API (`npm.cmd run dev:api`). Never commit `.env`.
 - Evaluation, verdicts, retry/remedial rules and evidence logic remain fully
   deterministic — AI generates teaching prose only.
+
+## AI goal parsing (R2)
+
+- After entering a goal, the server may interpret it into subject, desired
+  outcome and timeframe via `POST /api/goal-parse`. The learner reviews the
+  suggestion in a “Here's what I understood” card, edits it freely, and
+  confirms — only the confirmed values persist, alongside the raw goal text.
+- Without AI (or on any failure) the card never appears and the raw-text
+  flow works exactly as before. AI never validates, scores, or judges goals;
+  template detection, diagnostics, progression and evidence are unchanged.
 
 ## Build check
 

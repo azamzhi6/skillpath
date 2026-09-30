@@ -37,9 +37,18 @@ export interface LearningPath {
   stages: PathStage[]
 }
 
+export interface ParsedGoal {
+  subject: string
+  desiredOutcome: string
+  timeframe: string
+}
+
 export interface LearnerState {
   goalText: string
   clarification: Clarification | null
   answers: DiagnosticAnswer[]
   completedStageIds: string[]
+  // Learner-confirmed structured goal (R2). Null when never parsed or
+  // confirmed; old saves load as null and behave exactly as before.
+  parsedGoal: ParsedGoal | null
 }

@@ -3,16 +3,23 @@
 // GROQ_BASE_URL (default Groq cloud; overridable for tests/proxies),
 // GROQ_TIMEOUT_MS (default 25000).
 
-import { buildFeedbackMessages, buildLearnMessages } from './prompts.ts'
+import {
+  buildFeedbackMessages,
+  buildGoalParseMessages,
+  buildLearnMessages,
+} from './prompts.ts'
 import {
   validateFeedbackProse,
   validateLearnContent,
+  validateParsedGoal,
   type ValidFeedbackProse,
   type ValidLearnContent,
+  type ValidParsedGoal,
 } from './validate.ts'
 import type {
   AiProvider,
   FeedbackProseRequest,
+  GoalParseRequest,
   LearnRequest,
 } from './provider.ts'
 
@@ -90,6 +97,14 @@ export class GroqProvider implements AiProvider {
     return extractFeedbackContent(body)
   }
 
+  async generateGoalParse(
+    request: GoalParseRequest,
+  ): Promise<ValidParsedGoal | null> {
+    const messages = buildGoalParseMessages(request.input)
+    const body = await this.chatJson(messages.system, messages.user)
+    return extractGoalParseContent(body)
+  }
+
   // Shared Groq chat-completions call. Returns the raw parsed body, or null
   // on timeout, HTTP error, or malformed JSON. Callers validate shapes.
   private async chatJson(system: string, user: string): Promise<unknown> {
@@ -139,4 +154,20 @@ export function extractFeedbackContent(body: unknown): ValidFeedbackProse | null
     return null
   }
   return validateFeedbackProse(parsed)
+}
+
+export function extractGoalParseContent(body: unknown): ValidParsedGoal | null {
+  if (typeof body !== 'object' || body === null) return null
+  const choices = (body as { choices?: { message?: { content?: unknown } }[] })
+    .choices
+  if (!Array.isArray(choices) || choices.length === 0) return null
+  const content = choices[0]?.message?.content
+  if (typeof content !== 'string' || content.trim() === '') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    return null
+  }
+  return validateParsedGoal(parsed)
 }

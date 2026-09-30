@@ -15,6 +15,7 @@ import {
   apiHealth,
   clearActivityUi,
   clearRemoteState,
+  fetchGoalParse,
   fetchLearnContent,
   fetchLearning,
   fetchRemoteState,
@@ -33,6 +34,7 @@ import type {
   Clarification,
   DiagnosticAnswer,
   LearnerState,
+  ParsedGoal,
   PathStage,
   Step,
 } from './types'
@@ -96,6 +98,7 @@ function buildSnapshot(state: LearnerState): ApiJourneySnapshot {
     pathLevel: path ? path.level : level,
     stages: path ? path.stages : [],
     completedStageIds: state.completedStageIds,
+    parsedGoal: state.parsedGoal,
   }
 }
 
@@ -116,6 +119,12 @@ export default function App() {
   const [answers, setAnswers] = useState<DiagnosticAnswer[]>([])
   const [completedStageIds, setCompletedStageIds] = useState<string[]>([])
   const [restored, setRestored] = useState(false)
+  // R2: learner-confirmed structured goal (null = raw text only, as before).
+  const [parsedGoal, setParsedGoal] = useState<ParsedGoal | null>(null)
+  const [parseSuggestion, setParseSuggestion] = useState<ParsedGoal | null>(null)
+  const [parsingGoal, setParsingGoal] = useState(false)
+  const [parseConfirmed, setParseConfirmed] = useState(false)
+  const [editParsed, setEditParsed] = useState<ParsedGoal | null>(null)
   const [apiMode, setApiMode] = useState<PersistenceMode>('checking')
   const [saving, setSaving] = useState(false)
   // Phase 5 learning loop: selected activity, draft (local only), submissions.
@@ -136,6 +145,11 @@ export default function App() {
     if (saved.clarification) setClarification(saved.clarification)
     setAnswers(saved.answers)
     setCompletedStageIds(saved.completedStageIds)
+    setParsedGoal(saved.parsedGoal ?? null)
+    setParseSuggestion(null)
+    setEditParsed(null)
+    setParseConfirmed(saved.parsedGoal !== null && saved.parsedGoal !== undefined)
+    setParsingGoal(false)
     // Only resume at the path step when the diagnostic is fully answered;
     // a partial diagnostic (e.g. after a mid-step refresh) resumes at the
     // diagnostic step with answers preserved.
@@ -226,6 +240,7 @@ export default function App() {
       clarification: step === 'goal' ? null : clarification,
       answers,
       completedStageIds,
+      parsedGoal,
     }
     if (goalText.trim() === '') return
     localStorageAdapter.save(state)
@@ -238,7 +253,7 @@ export default function App() {
           if (isOfflineError(err)) setApiMode('offline')
         })
     }
-  }, [goalText, clarification, answers, completedStageIds, step, restored, apiMode])
+  }, [goalText, clarification, answers, completedStageIds, step, restored, apiMode, parsedGoal])
 
   // Activity UI (selected stage + per-stage drafts) persists in localStorage
   // only — drafts are never sent to SQLite; only submitted work persists.
@@ -275,7 +290,31 @@ export default function App() {
       return
     }
     setGoalError(null)
+    setParsedGoal(null)
+    setParseSuggestion(null)
+    setEditParsed(null)
+    setParseConfirmed(false)
     setStep('clarify')
+    // R2: interpret the raw goal in the background. The raw text stays
+    // authoritative; the suggestion only becomes stored data on Confirm.
+    // Any failure (including no API) silently keeps the raw-text flow.
+    if (apiMode === 'api') {
+      const text = goalText.trim()
+      setParsingGoal(true)
+      void fetchGoalParse(text)
+        .then((result) => {
+          if (result.source === 'ai' && result.parsed) {
+            setParseSuggestion(result.parsed)
+            setEditParsed({ ...result.parsed })
+          }
+        })
+        .catch(() => {
+          // Fallback is the raw-text flow; nothing to show.
+        })
+        .finally(() => {
+          setParsingGoal(false)
+        })
+    }
   }
 
   function answerQuestion(questionId: string, choiceId: string) {
@@ -532,6 +571,11 @@ export default function App() {
     setSubmitting(false)
     setGoalText('')
     setGoalError(null)
+    setParsedGoal(null)
+    setParseSuggestion(null)
+    setEditParsed(null)
+    setParseConfirmed(false)
+    setParsingGoal(false)
     setClarification({
       experience: EXPERIENCE_OPTIONS[0],
       hoursPerWeek: HOURS_OPTIONS[1],
@@ -837,6 +881,117 @@ export default function App() {
               <p className="mb-4 mt-1 text-[15px] leading-relaxed text-muted">
                 {clarifySummary(goalText, clarification)}
               </p>
+              {parsingGoal && (
+                <p className="mb-4 text-[15px] leading-relaxed text-muted">
+                  Understanding your goal…
+                </p>
+              )}
+              {parseSuggestion && editParsed && !parseConfirmed && (
+                <div className="mb-4 rounded-xl border border-line bg-surface p-4">
+                  <p className="text-base font-semibold text-ink">
+                    Here’s what I understood — correct me if needed
+                  </p>
+                  <label
+                    htmlFor="parsed-subject"
+                    className="mb-1 mt-3 block text-sm font-semibold text-ink"
+                  >
+                    Subject
+                  </label>
+                  <input
+                    id="parsed-subject"
+                    type="text"
+                    value={editParsed.subject}
+                    maxLength={120}
+                    onChange={(e) =>
+                      setEditParsed({ ...editParsed, subject: e.target.value })
+                    }
+                    className="w-full rounded-lg border-2 border-line bg-white px-3 py-2 text-[15px] text-ink focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint"
+                  />
+                  <label
+                    htmlFor="parsed-outcome"
+                    className="mb-1 mt-3 block text-sm font-semibold text-ink"
+                  >
+                    Desired outcome
+                  </label>
+                  <input
+                    id="parsed-outcome"
+                    type="text"
+                    value={editParsed.desiredOutcome}
+                    maxLength={300}
+                    onChange={(e) =>
+                      setEditParsed({
+                        ...editParsed,
+                        desiredOutcome: e.target.value,
+                      })
+                    }
+                    className="w-full rounded-lg border-2 border-line bg-white px-3 py-2 text-[15px] text-ink focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint"
+                  />
+                  <label
+                    htmlFor="parsed-timeframe"
+                    className="mb-1 mt-3 block text-sm font-semibold text-ink"
+                  >
+                    Timeframe
+                  </label>
+                  <select
+                    id="parsed-timeframe"
+                    value={editParsed.timeframe}
+                    onChange={(e) =>
+                      setEditParsed({ ...editParsed, timeframe: e.target.value })
+                    }
+                    className="w-full rounded-lg border-2 border-line bg-white px-3 py-2 text-[15px] text-ink focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint"
+                  >
+                    <option value="">Not specified</option>
+                    <option value="2 weeks">2 weeks</option>
+                    <option value="1 month">1 month</option>
+                    <option value="3 months">3 months</option>
+                    <option value="flexible">Flexible</option>
+                  </select>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editParsed) {
+                          setParsedGoal({ ...editParsed })
+                          setParseConfirmed(true)
+                        }
+                      }}
+                      className="rounded-[10px] bg-primary px-5 py-2 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setParseSuggestion(null)
+                        setEditParsed(null)
+                      }}
+                      className="rounded-[10px] border-2 border-line bg-white px-5 py-2 text-base font-semibold text-muted hover:border-primary hover:text-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+                    >
+                      Skip
+                    </button>
+                  </div>
+                </div>
+              )}
+              {parseConfirmed && parsedGoal && (
+                <div className="mb-4 rounded-xl border border-line bg-surface p-4">
+                  <p className="text-[15px] leading-relaxed text-ink">
+                    <strong>Confirmed goal:</strong> {parsedGoal.subject}
+                    {parsedGoal.desiredOutcome !== '' &&
+                      ` — ${parsedGoal.desiredOutcome}`}
+                    {parsedGoal.timeframe !== '' && ` (${parsedGoal.timeframe})`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditParsed({ ...parsedGoal })
+                      setParseConfirmed(false)
+                    }}
+                    className="mt-2 text-sm font-semibold text-primary-dark hover:underline focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
               <div className="grid gap-4">
                 <div>
                   <label

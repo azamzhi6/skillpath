@@ -86,3 +86,37 @@ export function buildFeedbackMessages(input: FeedbackPromptInput): {
     ].join('\n'),
   }
 }
+
+// Goal-parse prompt v1 (R2). Extraction only, never assessment: pull the
+// subject, desired outcome and timeframe reasonably present in the learner's
+// own words. Never infer skill level, proficiency, readiness or a timeframe
+// that is not stated. Use "" when a field cannot be extracted.
+
+export const GOAL_PARSE_PROMPT_VERSION = 'v1'
+
+export interface GoalParsePromptInput {
+  goalText: string
+}
+
+export const GOAL_PARSE_SYSTEM_INSTRUCTIONS = [
+  'You extract structured information from a learner-stated learning goal.',
+  'Extract only information reasonably present in the text. Preserve the intended meaning.',
+  'Do not invent missing facts. Do not infer skill level, proficiency, diagnostic level, readiness, performance or assessment status.',
+  'Do not infer a timeframe that is not stated. Do not make the outcome more ambitious than stated. Do not convert vague language into a specific measurable target unless that target is present in the text.',
+  'Use "" for any field that cannot be extracted. Do not make assessment or progression decisions.',
+  'Return ONLY the required JSON object, no other text.',
+].join(' ')
+
+export function buildGoalParseMessages(input: GoalParsePromptInput): {
+  system: string
+  user: string
+} {
+  return {
+    system: GOAL_PARSE_SYSTEM_INSTRUCTIONS,
+    user: [
+      `Learner goal: ${input.goalText}`,
+      'Extract the subject, the desired outcome in the learner’s own terms, and the timeframe if one is stated.',
+      'Respond with JSON only: {"subject": "...", "desiredOutcome": "...", "timeframe": "..."}',
+    ].join('\n'),
+  }
+}

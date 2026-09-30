@@ -2,8 +2,16 @@
 // interface, never on a specific vendor. Swapping providers means adding
 // one adapter file, not rewriting learning logic.
 
-import type { FeedbackPromptInput, LearnPromptInput } from './prompts.ts'
-import type { ValidFeedbackProse, ValidLearnContent } from './validate.ts'
+import type {
+  FeedbackPromptInput,
+  GoalParsePromptInput,
+  LearnPromptInput,
+} from './prompts.ts'
+import type {
+  ValidFeedbackProse,
+  ValidLearnContent,
+  ValidParsedGoal,
+} from './validate.ts'
 
 export interface LearnRequest {
   input: LearnPromptInput
@@ -11,6 +19,10 @@ export interface LearnRequest {
 
 export interface FeedbackProseRequest {
   input: FeedbackPromptInput
+}
+
+export interface GoalParseRequest {
+  input: GoalParsePromptInput
 }
 
 export interface AiProvider {
@@ -32,4 +44,12 @@ export interface AiProvider {
   generateFeedbackProse(
     request: FeedbackProseRequest,
   ): Promise<ValidFeedbackProse | null>
+  /**
+   * Extract structured goal fields from free text. Interpretation only:
+   * never validates, scores, or judges the goal. Returns null on any
+   * provider-side problem.
+   */
+  generateGoalParse(
+    request: GoalParseRequest,
+  ): Promise<ValidParsedGoal | null>
 }

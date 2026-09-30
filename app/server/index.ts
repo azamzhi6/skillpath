@@ -61,6 +61,35 @@ app.delete('/api/state', (_req, res) => {
   res.json({ ok: true })
 })
 
+// R2: AI goal parsing. Interpretation only — raw-goal validation stays
+// deterministic and the parsed fields never gate progression. Always 200
+// with { source, parsed }; failures yield { source: 'mock', parsed: null }.
+app.post('/api/goal-parse', async (req, res) => {
+  const body = req.body as { goalText?: unknown }
+  if (
+    typeof body.goalText !== 'string' ||
+    body.goalText.trim().length < 4 ||
+    body.goalText.length > 500
+  ) {
+    res.status(400).json({ error: 'Invalid goal text' })
+    return
+  }
+  if (learnProvider && learnProvider.isConfigured()) {
+    try {
+      const parsed = await learnProvider.generateGoalParse({
+        input: { goalText: body.goalText },
+      })
+      if (parsed) {
+        res.json({ source: 'ai', parsed })
+        return
+      }
+    } catch {
+      // Fall through to the mock source below.
+    }
+  }
+  res.json({ source: 'mock', parsed: null })
+})
+
 // Phase 6B: AI Learn content. Always 200 with { source, explanation?, example? }.
 // source 'mock' means the frontend must use its deterministic stageLearn() text.
 app.post('/api/learn', async (req, res) => {
@@ -319,11 +348,32 @@ function parseSnapshot(value: unknown): StoredSnapshot | null {
   ) {
     return null
   }
+  let parsedGoal: StoredSnapshot['parsedGoal'] = null
+  if (s.parsedGoal !== undefined && s.parsedGoal !== null) {
+    if (typeof s.parsedGoal !== 'object') return null
+    const g = s.parsedGoal as Record<string, unknown>
+    if (
+      typeof g.subject !== 'string' ||
+      g.subject.length > 120 ||
+      typeof g.desiredOutcome !== 'string' ||
+      g.desiredOutcome.length > 300 ||
+      typeof g.timeframe !== 'string' ||
+      !['2 weeks', '1 month', '3 months', 'flexible', ''].includes(g.timeframe)
+    ) {
+      return null
+    }
+    parsedGoal = {
+      subject: g.subject,
+      desiredOutcome: g.desiredOutcome,
+      timeframe: g.timeframe,
+    }
+  }
   return {
     goalText: s.goalText,
     template: s.template,
     experience: s.experience,
     hoursPerWeek: s.hoursPerWeek,
+    parsedGoal,
     answers: s.answers as StoredSnapshot['answers'],
     score: s.score,
     level: s.level,
