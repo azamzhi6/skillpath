@@ -1,7 +1,8 @@
 # SkillPath prototype (local)
 
-**Status: Phase 5 — Learning Loop is implemented.**
-Next planned phase: **Phase 6+ / future MVP** (not planned yet).
+**Status: Phases 3–5 implemented; Phase 6A–6C implemented (Real-AI Learn
+content via Groq with deterministic mock fallback).**
+Next planned work: **Phase 6D+** (not implemented).
 
 Working SkillPath page with mock coaching logic. Persistence is a thin local
 Express API backed by SQLite (`better-sqlite3`); browser localStorage remains
@@ -62,6 +63,17 @@ an offline fallback and as the one-time migration source.
 - The final capability task is evaluated deterministically; success writes a
   `capability_evidence` row (multiple demonstrations per goal are allowed;
   the UI shows the latest).
+
+## Real-AI Learn content (Phase 6A–6C, Groq)
+
+- Opening a stage requests AI-generated Learn text from `POST /api/learn`.
+  Without `GROQ_API_KEY` (or when Groq fails/times out), the existing
+  deterministic content renders with no label change.
+- AI content is labelled “AI-generated — verify with authoritative sources”.
+- Setup: copy `app/.env.example` to `app/.env`, set `GROQ_API_KEY`, restart
+  the API (`npm.cmd run dev:api`). Never commit `.env`.
+- Evaluation, verdicts, retry/remedial rules and evidence logic remain fully
+  deterministic — AI generates teaching prose only.
 
 ## Build check
 

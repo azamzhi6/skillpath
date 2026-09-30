@@ -3,8 +3,9 @@
 Thin local Express API backed by a local SQLite file (`better-sqlite3`).
 No auth, no cloud, no AI calls, no deployment.
 
-**Status: Phase 3 — Progress Persistence & Data Layer is implemented.**
-Next planned phase: **Phase 4 — Prototype Hardening & Handoff** (not implemented).
+**Status: Phases 3–5 implemented; Phase 6A–6C implemented (Real-AI Learn
+content via Groq with deterministic mock fallback).**
+Next planned work: **Phase 6D+** (not implemented).
 
 ## Node version
 
@@ -53,6 +54,25 @@ If the database cannot be opened, the API exits with a clear error message.
 - `PUT /api/state` ← `{ state: <journey snapshot> }` (validated, upsert in one transaction; 400 on invalid payload or malformed JSON)
 - `DELETE /api/state` → clears the demo journey including learning-loop rows
 - `POST /api/submissions` ← `{ stageId, kind, response, verdict, strengths, improvements, nextAction, evidence? }` → `{ submission: { id, attempt }, feedback: { verdict }, evidenceId }` (attempt assigned server-side; one transaction; 400 on invalid payload or missing journey)
+- `POST /api/learn` ← `{ goalText, outcome, stageTitle, stageKind, stageDescription, practiceTask, level }` → `{ source: 'ai', explanation, example }` or `{ source: 'mock' }` (validated; AI failures fall back to mock, never to learner-facing errors)
+
+## Real AI (Groq, Phase 6A–6C)
+
+- The app depends on the `AiProvider` interface (`server/ai/provider.ts`), not
+  on Groq directly. `GroqProvider` (`server/ai/groq.ts`) is selected only when
+  `GROQ_API_KEY` is set; otherwise Learn content falls back to deterministic
+  templates with no label change.
+- Configuration (all optional except the key): `GROQ_MODEL`
+  (default `llama-3.3-70b-versatile`), `GROQ_BASE_URL` (default Groq cloud),
+  `GROQ_TIMEOUT_MS` (default 25000). Copy `app/.env.example` to `app/.env`
+  locally — `.env` is gitignored and the key is server-side only (never
+  logged, never sent to the browser).
+- Prompt `v1` lives in `server/ai/prompts.ts`; Learn responses are validated
+  in `server/ai/validate.ts` (non-empty strings, 1200/800 char caps).
+- No `ai_cache` table: Learn content is personalised per goal/outcome, so a
+  goal-independent cache key would serve identical text to different learners.
+  Each stage open performs at most one AI call (~3 per journey); this keeps
+  slice 1 simple instead of over-engineered.
 
 ## Fresh-install notes (Windows)
 

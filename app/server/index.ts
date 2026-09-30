@@ -4,6 +4,9 @@
 
 import express from 'express'
 import type { NextFunction, Request, Response } from 'express'
+import { loadLocalEnv } from './ai/env.ts'
+import { GroqProvider, groqConfigFromEnv } from './ai/groq.ts'
+import type { AiProvider } from './ai/provider.ts'
 import {
   clearAll,
   dbFilePath,
@@ -17,9 +20,19 @@ import {
   type StoredSnapshot,
 } from './db.ts'
 
+loadLocalEnv()
+
 const PORT = Number(process.env.PORT ?? 5174)
 const app = express()
 app.use(express.json({ limit: '256kb' }))
+
+const groqConfig = groqConfigFromEnv()
+const learnProvider: AiProvider | null = groqConfig
+  ? new GroqProvider(groqConfig)
+  : null
+console.log(
+  `SkillPath AI Learn provider: ${learnProvider ? `groq (model ${groqConfig?.model})` : 'mock fallback (no GROQ_API_KEY)'}`,
+)
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
@@ -44,6 +57,74 @@ app.delete('/api/state', (_req, res) => {
   clearAll()
   res.json({ ok: true })
 })
+
+// Phase 6B: AI Learn content. Always 200 with { source, explanation?, example? }.
+// source 'mock' means the frontend must use its deterministic stageLearn() text.
+app.post('/api/learn', async (req, res) => {
+  const input = parseLearnInput(req.body)
+  if (!input) {
+    res.status(400).json({ error: 'Invalid learn request' })
+    return
+  }
+  if (learnProvider && learnProvider.isConfigured()) {
+    try {
+      const content = await learnProvider.generateLearn({ input })
+      if (content) {
+        res.json({
+          source: 'ai',
+          explanation: content.explanation,
+          example: content.example,
+        })
+        return
+      }
+    } catch {
+      // Fall through to the mock source below.
+    }
+  }
+  res.json({ source: 'mock' })
+})
+
+const STAGE_KINDS = ['Learn', 'See', 'Practise', 'Produce'] as const
+
+function parseLearnInput(value: unknown): {
+  goalText: string
+  outcome: string
+  stageTitle: string
+  stageKind: string
+  stageDescription: string
+  practiceTask: string
+  level: string
+} | null {
+  if (typeof value !== 'object' || value === null) return null
+  const s = value as Record<string, unknown>
+  const fields = [
+    'goalText',
+    'outcome',
+    'stageTitle',
+    'stageKind',
+    'stageDescription',
+    'practiceTask',
+    'level',
+  ] as const
+  for (const field of fields) {
+    if (typeof s[field] !== 'string' || (s[field] as string).trim() === '') {
+      return null
+    }
+    if ((s[field] as string).length > 2000) return null
+  }
+  if (!(STAGE_KINDS as readonly string[]).includes(s.stageKind as string)) {
+    return null
+  }
+  return {
+    goalText: s.goalText as string,
+    outcome: s.outcome as string,
+    stageTitle: s.stageTitle as string,
+    stageKind: s.stageKind as string,
+    stageDescription: s.stageDescription as string,
+    practiceTask: s.practiceTask as string,
+    level: s.level as string,
+  }
+}
 
 const SUBMISSION_KINDS = ['practice', 'capability'] as const
 const SUBMISSION_VERDICTS = ['satisfactory', 'retry', 'remedial'] as const

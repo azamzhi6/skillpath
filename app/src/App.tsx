@@ -15,6 +15,7 @@ import {
   apiHealth,
   clearActivityUi,
   clearRemoteState,
+  fetchLearnContent,
   fetchLearning,
   fetchRemoteState,
   isOfflineError,
@@ -47,6 +48,12 @@ const HOURS_OPTIONS = ['2 hours', '4 hours', '6+ hours']
 type PersistenceMode = 'checking' | 'api' | 'offline'
 
 type ActivityView = 'learn' | 'practice' | 'feedback'
+
+interface AiLearnEntry {
+  status: 'loading' | 'ai' | 'mock'
+  explanation?: string
+  example?: string
+}
 
 function encodeList(items: string[]): string {
   return JSON.stringify(items)
@@ -120,6 +127,9 @@ export default function App() {
   const [subs, setSubs] = useState<LearningSubmission[]>([])
   const [fbMap, setFbMap] = useState<Record<string, LearningFeedback>>({})
   const [evidenceList, setEvidenceList] = useState<CapabilityEvidence[]>([])
+  // Phase 6B: per-stage AI Learn content. Absent/mock entries render the
+  // existing deterministic stageLearn() text; only 'ai' entries are labelled.
+  const [aiLearn, setAiLearn] = useState<Record<string, AiLearnEntry>>({})
 
   function applyState(saved: LearnerState) {
     setGoalText(saved.goalText)
@@ -304,11 +314,53 @@ export default function App() {
     return stagePracticeSubs(stageId).length
   }
 
+  function ensureAiLearn(stageId: string) {
+    if (aiLearn[stageId]) return
+    if (apiMode !== 'api' || !path) {
+      setAiLearn((prev) => ({ ...prev, [stageId]: { status: 'mock' } }))
+      return
+    }
+    const stage = path.stages.find((s) => s.id === stageId)
+    if (!stage) {
+      setAiLearn((prev) => ({ ...prev, [stageId]: { status: 'mock' } }))
+      return
+    }
+    setAiLearn((prev) => ({ ...prev, [stageId]: { status: 'loading' } }))
+    const request = {
+      goalText,
+      outcome: path.outcome,
+      stageTitle: stage.title,
+      stageKind: stage.kind,
+      stageDescription: stage.description,
+      practiceTask: stage.practice,
+      level: path.level,
+    }
+    void fetchLearnContent(request).then((result) => {
+      setAiLearn((prev) => ({
+        ...prev,
+        [stageId]:
+          result.source === 'ai' && result.explanation && result.example
+            ? {
+                status: 'ai',
+                explanation: result.explanation,
+                example: result.example,
+              }
+            : { status: 'mock' },
+      }))
+    })
+  }
+
   function openStage(stageId: string) {
     setActivityStageId(stageId)
     setActivityView('learn')
     setSubmitError(null)
+    ensureAiLearn(stageId)
   }
+
+  // Restored activities (e.g. after refresh) still need their Learn content.
+  useEffect(() => {
+    if (step === 'path' && activityStageId) ensureAiLearn(activityStageId)
+  })
 
   function closeActivity() {
     setActivityStageId(null)
@@ -472,6 +524,7 @@ export default function App() {
     setSubs([])
     setFbMap({})
     setEvidenceList([])
+    setAiLearn({})
     setActivityStageId(null)
     setActivityView('learn')
     setDrafts({})
@@ -496,6 +549,9 @@ export default function App() {
     const latestSub = stageSubs[stageSubs.length - 1] ?? null
     const latestFb = latestSub ? (fbMap[latestSub.id] ?? null) : null
     const done = stageSatisfactory(stage.id)
+    const aiEntry = aiLearn[stage.id]
+    const showAi =
+      aiEntry?.status === 'ai' && aiEntry.explanation && aiEntry.example
     const draft = drafts[stage.id] ?? ''
     return (
       <section
@@ -529,10 +585,32 @@ export default function App() {
             <p className="mt-1 text-[15px] leading-relaxed">
               <strong>Objective:</strong> {learn.objective}
             </p>
-            <p className="mt-2 text-[15px] leading-relaxed">{learn.content}</p>
-            <p className="mt-2 text-[15px] leading-relaxed text-muted">
-              {learn.example}
-            </p>
+            {!aiEntry || aiEntry.status === 'loading' ? (
+              <p className="mt-2 text-[15px] leading-relaxed text-muted">
+                Preparing your lesson…
+              </p>
+            ) : showAi ? (
+              <>
+                <p className="mt-2 text-[15px] leading-relaxed">
+                  {aiEntry.explanation}
+                </p>
+                <p className="mt-2 text-[15px] leading-relaxed text-muted">
+                  {aiEntry.example}
+                </p>
+                <p className="mt-2 text-[13px] leading-relaxed text-muted">
+                  AI-generated — verify with authoritative sources
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="mt-2 text-[15px] leading-relaxed">
+                  {learn.content}
+                </p>
+                <p className="mt-2 text-[15px] leading-relaxed text-muted">
+                  {learn.example}
+                </p>
+              </>
+            )}
             <div className="mt-4">
               <button
                 type="button"

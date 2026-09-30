@@ -151,6 +151,59 @@ export async function clearRemoteState(): Promise<void> {
   await requestJson('/api/state', { method: 'DELETE' })
 }
 
+// ---- Phase 6B: AI Learn content ----
+// Never throws: any failure means the UI must use deterministic content.
+
+export interface LearnContentRequest {
+  goalText: string
+  outcome: string
+  stageTitle: string
+  stageKind: string
+  stageDescription: string
+  practiceTask: string
+  level: string
+}
+
+export interface LearnContentResult {
+  source: 'ai' | 'mock'
+  explanation?: string
+  example?: string
+}
+
+export async function fetchLearnContent(
+  input: LearnContentRequest,
+): Promise<LearnContentResult> {
+  try {
+    const data = (await requestJson('/api/learn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })) as {
+      source?: unknown
+      explanation?: unknown
+      example?: unknown
+    }
+    if (
+      data.source === 'ai' &&
+      typeof data.explanation === 'string' &&
+      data.explanation.trim() !== '' &&
+      data.explanation.length <= 1200 &&
+      typeof data.example === 'string' &&
+      data.example.trim() !== '' &&
+      data.example.length <= 800
+    ) {
+      return {
+        source: 'ai',
+        explanation: data.explanation,
+        example: data.example,
+      }
+    }
+  } catch {
+    // Fall through to mock below.
+  }
+  return { source: 'mock' }
+}
+
 // ---- Phase 5: activity UI state (drafts live here, localStorage only) ----
 // Draft responses are never sent to SQLite; only submitted work persists.
 
