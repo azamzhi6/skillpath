@@ -434,6 +434,32 @@ const PRACTICE_MIN_HITS = 2
 const CAPABILITY_MIN_LENGTH = 60
 const CAPABILITY_MIN_HITS = 3
 
+// Learner-facing view of the deterministic rules above. The UI derives its
+// displayed criteria from these functions so there is exactly one
+// authoritative definition of what "satisfactory" checks. No scoring logic
+// lives here beyond re-exposing the existing constants and keyword lists.
+export interface AssessmentCriteria {
+  minLength: number
+  minHits: number
+  keywords: string[]
+}
+
+export function practiceCriteria(template: TemplateId): AssessmentCriteria {
+  return {
+    minLength: PRACTICE_MIN_LENGTH,
+    minHits: PRACTICE_MIN_HITS,
+    keywords: PRACTICE_KEYWORDS[template],
+  }
+}
+
+export function capabilityCriteria(template: TemplateId): AssessmentCriteria {
+  return {
+    minLength: CAPABILITY_MIN_LENGTH,
+    minHits: CAPABILITY_MIN_HITS,
+    keywords: PRACTICE_KEYWORDS[template],
+  }
+}
+
 function keywordHits(template: TemplateId, response: string): string[] {
   const text = response.toLowerCase()
   return PRACTICE_KEYWORDS[template].filter((kw) => text.includes(kw))

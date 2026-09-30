@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  capabilityCriteria,
   capabilityTask,
   clarifySummary,
   detectTemplate,
@@ -9,6 +10,7 @@ import {
   evaluatePractice,
   generatePath,
   nextStage,
+  practiceCriteria,
   stageLearn,
 } from './mockCoach'
 import {
@@ -327,14 +329,6 @@ export default function App() {
   function submitDiagnostic() {
     if (answers.length < questions.length) return
     setStep('path')
-  }
-
-  function toggleStage(stageId: string) {
-    setCompletedStageIds((prev) =>
-      prev.includes(stageId)
-        ? prev.filter((id) => id !== stageId)
-        : [...prev, stageId],
-    )
   }
 
   // ---- Phase 5 learning loop (evaluation centralized in mockCoach) ----
@@ -674,6 +668,35 @@ export default function App() {
           <div>
             <h3 className="text-lg font-bold leading-snug text-ink">Practise</h3>
             <p className="mt-1 text-[15px] leading-relaxed">{stage.practice}</p>
+            <div className="mt-3 rounded-xl border border-line bg-surface p-4">
+              <p className="text-base font-semibold text-ink">
+                How SkillPath assesses your work
+              </p>
+              <p className="mt-1 text-[15px] leading-relaxed">
+                AI can help explain the lesson and phrase coaching feedback.
+                Your assessment result is determined by the criteria below —
+                not by the AI. Review them before you submit.
+              </p>
+              <p className="mt-2 text-[15px] leading-relaxed">
+                <strong>For a satisfactory response:</strong>
+              </p>
+              <ul className="mt-1 grid list-disc gap-1 pl-5">
+                <li className="text-[15px] leading-relaxed">
+                  Explain what you did and why (at least{' '}
+                  {practiceCriteria(template).minLength} characters).
+                </li>
+                <li className="text-[15px] leading-relaxed">
+                  Address at least {practiceCriteria(template).minHits} of
+                  these key concepts:{' '}
+                  {practiceCriteria(template).keywords.join(', ')}.
+                </li>
+              </ul>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                SkillPath checks the length of your response and whether these
+                key concepts appear — it does not judge correctness, reasoning
+                quality, or factual accuracy.
+              </p>
+            </div>
             <label
               htmlFor={`practice-${stage.id}`}
               className="mb-1.5 mt-3 block text-base font-semibold text-ink"
@@ -1165,24 +1188,13 @@ export default function App() {
                         }`}
                       >
                         <div className="flex items-start gap-3">
-                            <input
-                              id={`stage-${s.id}`}
-                              type="checkbox"
-                              checked={done}
-                              onChange={() => toggleStage(s.id)}
-                              title="Manual prototype override (testing only)"
-                              className="mt-1 h-5 w-5 accent-[#0F766E]"
-                            />
                           <div>
-                            <label
-                              htmlFor={`stage-${s.id}`}
-                              className="cursor-pointer text-base font-bold leading-snug text-ink"
-                            >
+                            <p className="text-base font-bold leading-snug text-ink">
                               {i + 1}. {s.title}{' '}
                               <span className="font-medium text-muted">
                                 · {s.kind} · ~{s.minutes} min
                               </span>
-                            </label>
+                            </p>
                             <p className="mt-1 text-[15px] leading-relaxed">
                               {s.description}
                             </p>
@@ -1275,6 +1287,31 @@ export default function App() {
                       )}
                     </div>
                   )}
+                  <div className="mb-4 rounded-xl border border-line bg-surface p-4">
+                    <p className="text-base font-semibold text-ink">
+                      How this demonstration is assessed
+                    </p>
+                    <p className="mt-1 text-[15px] leading-relaxed">
+                      AI can help phrase coaching feedback. Whether this
+                      counts as demonstrated capability is determined by the
+                      criteria below — not by the AI.
+                    </p>
+                    <p className="mt-2 text-[15px] leading-relaxed">
+                      <strong>For a satisfactory demonstration:</strong>
+                    </p>
+                    <ul className="mt-1 grid list-disc gap-1 pl-5">
+                      <li className="text-[15px] leading-relaxed">
+                        Describe what you produced and the steps you took in
+                        enough detail (at least{' '}
+                        {capabilityCriteria(template).minLength} characters).
+                      </li>
+                      <li className="text-[15px] leading-relaxed">
+                        Cover at least {capabilityCriteria(template).minHits}{' '}
+                        of these key concepts:{' '}
+                        {capabilityCriteria(template).keywords.join(', ')}.
+                      </li>
+                    </ul>
+                  </div>
                   <label
                     htmlFor="capability-response"
                     className="mb-1.5 block text-base font-semibold text-ink"
@@ -1330,15 +1367,15 @@ export default function App() {
                       {next.title} — {next.practice}
                     </h3>
                     <p className="mb-4 mt-1 text-[15px] leading-relaxed">
-                      About {next.minutes} minutes · {next.kind} step. Ticking
-                      it off above updates this card.
+                      About {next.minutes} minutes · {next.kind} step. Complete
+                      its practice with a satisfactory result to advance.
                     </p>
                     <button
                       type="button"
-                      onClick={() => toggleStage(next.id)}
+                      onClick={() => openStage(next.id)}
                       className="rounded-[10px] bg-primary px-6 py-3 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
                     >
-                      Mark this step done
+                      Open this stage
                     </button>
                   </>
                 ) : (
