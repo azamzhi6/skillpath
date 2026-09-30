@@ -123,3 +123,104 @@ layout, buttons (other than inherited text rendering) and behavior are unchanged
 
 ASCII alias for the "Task 2 — Design Refinement: typography and readability
 (DECIDED)" note above; see that section for the full refinement record.
+
+## Phase 5 — Core Learning Loop (DECIDED)
+
+**Decision:** Extend the prototype with Learn → Practise → Submit → Feedback →
+Adapt → Demonstrate → Capability Evidence using three new SQLite tables
+(`submissions`, `feedback`, `capability_evidence`) and centralized
+deterministic evaluators in `app/src/mockCoach.ts`. No `activities` table:
+activities are derived from the existing path stages in `paths.stages_json`.
+
+**Alternatives considered:**
+
+1. Three-table extension with derived activities (chosen).
+2. Four-table model with a stored `activities` table (rejected: duplicates
+   stage state and invites divergence).
+3. LLM-based evaluation (rejected: verdicts gate progression and evidence, so
+   they must remain exact, testable, and auditable).
+
+**Rationale (owner-approved):**
+
+- A stage is completed because the learner produces a satisfactory practice
+  result; manual checkboxes remain only as a clearly secondary prototype
+  override and can never unlock capability demonstration.
+- Attempt 1 failure returns retry; repeated failure returns remedial hints;
+  the learner is never trapped and can always keep practising.
+- `capability_evidence.goal_id` is deliberately not unique: a goal may have
+  more than one successful demonstration (UI shows the latest).
+- Attempt numbers are assigned server-side inside one transaction.
+- Draft responses persist in browser localStorage only and are never stored
+  in SQLite; there is no offline submission queue (Submit requires the API).
+- SQLite remains the source of truth for submitted evidence; the browser
+  mirror is the offline fallback, as in Phase 3.
+
+**Consequences for the plan:**
+
+- `evaluatePractice` / `evaluateCapability` live only in `mockCoach.ts`; the
+  UI calls them and never duplicates evaluation rules.
+- `POST /api/submissions` persists attempts; `GET /api/state` carries an
+  additive `learning` block; `DELETE` cascades through the new tables.
+- Existing goal/clarification/diagnostic/path/progress/offline/reset behaviour
+  is unchanged (additive snapshot fields only).
+
+**Scope guard:** No skill graphs, resource systems, assessment banks,
+analytics, chat history, roles, certificates, enrolments, notifications, AI
+model tables, uploads, or real authentication were added.
+
+## Phase 6A–6C — Real-AI Learn Content via Groq (DECIDED)
+
+**Decision:** Integrate real AI for one capability only — AI-generated Learn
+explanation + example — behind an `AiProvider` interface with `GroqProvider`
+selected when `GROQ_API_KEY` is set and deterministic mock content otherwise.
+AI generates teaching prose only; verdicts, adaptation, and evidence logic
+remain deterministic and unchanged.
+
+**Alternatives considered:**
+
+1. Provider abstraction + Groq for Learn prose (chosen).
+2. Replacing mock evaluation/adaptation with an LLM (rejected: destroys
+   testability and the progression guarantees proven in Phase 5).
+3. Live resource search in this slice (rejected: needs ranking and safety
+   review disproportionate to slice 1; deferred).
+4. An `ai_cache` table (rejected: Learn content is personalised per
+   goal/outcome, so a goal-independent key would mis-serve learners; at most
+   ~3 calls per journey keeps this simple).
+5. Validation library / dotenv dependency (rejected: hand-rolled validators
+   and a minimal env loader match existing project style with zero new
+   dependencies).
+
+**Rationale (owner-approved):**
+
+- Real AI is used where it materially improves the experience (teaching
+  prose); determinism is kept where reliability and testability matter
+  (verdicts, retries, evidence).
+- `POST /api/learn` always returns `{ source: 'ai' | 'mock', ... }`; every
+  provider failure (timeout, HTTP error, rate limit, malformed/invalid/empty
+  output, missing key) falls back to existing mock content without breaking
+  the journey.
+- Learn responses are strictly validated server-side (non-empty strings,
+  1200/800 character caps); malformed API payloads return JSON 400s.
+- AI content is labelled “AI-generated — verify with authoritative sources”;
+  mock content is never mislabelled.
+- The key exists only in server-side environment configuration (`app/.env`,
+  gitignored, never logged, never sent to the browser, never committed).
+- Default model `openai/gpt-oss-20b` with `max_tokens: 2000`: the original
+  default (`llama-3.3-70b-versatile`) no longer exists on Groq, and 700
+  tokens provably starved this reasoning model family
+  (`json_validate_failed`); 2000 was verified live with a validated response.
+  The model remains overridable via `GROQ_MODEL`.
+
+**Consequences for the plan:**
+
+- Application code depends on the provider contract, never on Groq directly;
+  swapping providers is a new adapter file, not a rewrite.
+- No database change, no new packages, no frontend redesign; mock mode
+  (no key) renders the byte-identical Phase 5 UI.
+- Safety posture: no invented URLs/resources (model instructed, links remain
+  the static list), uncertainty acknowledged, high-stakes disclaimer framing
+  available per PRD §21.
+
+**Scope guard:** No AI feedback prose, goal parsing, live search, agents,
+vector databases, Postgres, Docker, cloud, auth, uploads, or certificates.
+Those remain Phase 6D+ or explicitly deferred work.
