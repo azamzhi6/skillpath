@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  capabilityCriteria,
+  capabilityBrief,
   capabilityTask,
   clarifySummary,
   detectTemplate,
@@ -1368,12 +1368,16 @@ export default function App() {
                       <li className="text-[15px] leading-relaxed">
                         Describe what you produced and the steps you took in
                         enough detail (at least{' '}
-                        {capabilityCriteria(template).minLength} characters).
+                        {capabilityBrief(template).minLength} characters).
                       </li>
-                      <li className="text-[15px] leading-relaxed">
-                        Cover at least {capabilityCriteria(template).minHits}{' '}
-                        key concepts for your goal in your description.
-                      </li>
+                      {capabilityBrief(template).criteria.map((criterion) => (
+                        <li
+                          key={criterion.id}
+                          className="text-[15px] leading-relaxed"
+                        >
+                          {criterion.label}.
+                        </li>
+                      ))}
                     </ul>
                   </div>
                   <label

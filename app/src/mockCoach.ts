@@ -656,24 +656,140 @@ export interface CapabilityEvaluation {
   evidence: string
 }
 
-const PRACTICE_KEYWORDS: Record<TemplateId, string[]> = {
-  excel: ['sumifs', 'xlookup', 'pivot', 'clean', 'chart', 'margin', 'formula'],
-  web: ['html', 'css', 'responsive', 'layout', 'heading', 'link', 'publish'],
-  data: ['clean', 'missing', 'chart', 'average', 'dataset', 'insight', 'visual'],
-  generic: ['learn', 'practice', 'example', 'plan', 'goal', 'result', 'steps'],
-}
-
 const PRACTICE_MIN_LENGTH = 20
 const CAPABILITY_MIN_LENGTH = 60
-const CAPABILITY_MIN_HITS = 3
 
-// Learner-facing view of the deterministic rules. The UI derives its
-// displayed criteria from these functions so there is exactly one
-// authoritative definition of what "satisfactory" checks.
-export interface AssessmentCriteria {
+export interface CapabilityBrief {
+  title: string
+  instructions: string
   minLength: number
-  minHits: number
-  keywords: string[]
+  criteria: StageCriterion[]
+}
+
+const CAPABILITY_BRIEFS: Record<TemplateId, CapabilityBrief> = {
+  excel: {
+    title: 'Final capability demonstration',
+    minLength: CAPABILITY_MIN_LENGTH,
+    instructions:
+      'Using everything from this path, produce a small end-to-end analysis of sales data: choose the right method, show the output, explain what it means for a decision, and note one limitation.',
+    criteria: [
+      {
+        id: 'excel-cap-method',
+        label: 'Apply the appropriate method to the stated problem',
+        groups: [
+          ['sumifs', 'sum if', 'xlookup', 'vlookup', 'lookup', 'pivot', 'formula'],
+        ],
+      },
+      {
+        id: 'excel-cap-output',
+        label: 'Show the resulting output or decision',
+        groups: [['chart', 'summary', 'total', 'result', 'table']],
+      },
+      {
+        id: 'excel-cap-meaning',
+        label: 'Explain what the result means',
+        groups: [['margin', 'profit', 'mean', 'average', 'because', 'shows']],
+      },
+      {
+        id: 'excel-cap-limits',
+        label: 'Identify an important limitation or assumption',
+        groups: [['caveat', 'limit', 'assum', 'bias', 'check', 'verify']],
+      },
+    ],
+  },
+  web: {
+    title: 'Final capability demonstration',
+    minLength: CAPABILITY_MIN_LENGTH,
+    instructions:
+      'Using everything from this path, deliver a small working page: structured markup, deliberate styling, a visible result, and an explanation of one design decision and one limitation.',
+    criteria: [
+      {
+        id: 'web-cap-build',
+        label: 'Build the page with structured markup and styling',
+        groups: [
+          ['html', 'heading', 'section'],
+          ['css', 'style', 'layout'],
+        ],
+      },
+      {
+        id: 'web-cap-outcome',
+        label: 'Show the published result',
+        groups: [['publish', 'share', 'link', 'deploy', 'live', 'page']],
+      },
+      {
+        id: 'web-cap-decision',
+        label: 'Explain one design decision and one limitation',
+        groups: [
+          ['responsive', 'mobile', 'choice', 'because', 'decide'],
+          ['limit', 'browser', 'improve', 'next'],
+        ],
+      },
+    ],
+  },
+  data: {
+    title: 'Final capability demonstration',
+    minLength: CAPABILITY_MIN_LENGTH,
+    instructions:
+      'Using everything from this path, run a small analysis on real-feeling data: apply the cleaning and analysis method, present the finding with a figure, interpret what it means, and state one caveat.',
+    criteria: [
+      {
+        id: 'data-cap-method',
+        label: 'Apply the cleaning and analysis method',
+        groups: [
+          ['clean', 'missing', 'duplicate'],
+          ['average', 'total', 'summary', 'chart'],
+        ],
+      },
+      {
+        id: 'data-cap-finding',
+        label: 'Present the finding with a supporting figure',
+        groups: [
+          ['finding', 'result', 'insight'],
+          ['chart', 'figure', 'graph', 'visual'],
+        ],
+      },
+      {
+        id: 'data-cap-meaning',
+        label: 'Explain what the finding means',
+        groups: [['means', 'because', 'shows', 'insight', 'conclusion']],
+      },
+      {
+        id: 'data-cap-caveat',
+        label: 'State an important caveat on the finding',
+        groups: [['caveat', 'limit', 'bias', 'assumption', 'caution']],
+      },
+    ],
+  },
+  generic: {
+    title: 'Final capability demonstration',
+    minLength: CAPABILITY_MIN_LENGTH,
+    instructions:
+      'Using everything from this path, complete a small real task: apply the method, show what was produced, explain what it demonstrates, and note what you would improve next.',
+    criteria: [
+      {
+        id: 'gen-cap-apply',
+        label: 'Apply the method to the task',
+        groups: [['method', 'step', 'plan', 'approach', 'technique']],
+      },
+      {
+        id: 'gen-cap-outcome',
+        label: 'Show what was produced',
+        groups: [['result', 'outcome', 'produce', 'complete', 'work']],
+      },
+      {
+        id: 'gen-cap-reflect',
+        label: 'Explain what it demonstrates and what is next',
+        groups: [
+          ['demonstrate', 'shows', 'means', 'learn'],
+          ['next', 'improve', 'limitation', 'caveat'],
+        ],
+      },
+    ],
+  },
+}
+
+export function capabilityBrief(template: TemplateId): CapabilityBrief {
+  return CAPABILITY_BRIEFS[template] ?? CAPABILITY_BRIEFS.generic
 }
 
 export interface CriterionResult {
@@ -728,24 +844,6 @@ export function prioritizeRemediation(
     ),
   )
   return repeated.length > 0 ? repeated : [...unmetIds]
-}
-
-export function capabilityCriteria(template: TemplateId): AssessmentCriteria {
-  return {
-    minLength: CAPABILITY_MIN_LENGTH,
-    minHits: CAPABILITY_MIN_HITS,
-    keywords: PRACTICE_KEYWORDS[template],
-  }
-}
-
-function keywordHits(template: TemplateId, response: string): string[] {
-  const text = response.toLowerCase()
-  return PRACTICE_KEYWORDS[template].filter((kw) => text.includes(kw))
-}
-
-function missingKeywords(template: TemplateId, response: string): string[] {
-  const text = response.toLowerCase()
-  return PRACTICE_KEYWORDS[template].filter((kw) => !text.includes(kw))
 }
 
 export function stageLearn(stage: PathStage): StageLearnContent {
@@ -841,10 +939,10 @@ export function capabilityTask(
   goalText: string,
   outcome: string,
 ): CapabilityTask {
-  void template
+  const brief = capabilityBrief(template)
   return {
-    title: 'Final capability demonstration',
-    instructions: `Show what you can now do. Goal: ${goalText.trim()} Expected outcome: ${outcome} Describe what you produced, the steps you took, and what the result demonstrates. Aim for at least ${CAPABILITY_MIN_LENGTH} characters.`,
+    title: brief.title,
+    instructions: `Show what you can now do. Goal: ${goalText.trim()} Expected outcome: ${outcome} ${brief.instructions} Aim for at least ${CAPABILITY_MIN_LENGTH} characters.`,
   }
 }
 
@@ -854,23 +952,30 @@ export function evaluateCapability(
   response: string,
 ): CapabilityEvaluation {
   const trimmed = response.trim()
-  const hits = keywordHits(template, trimmed)
+  const brief = capabilityBrief(template)
+  const results = evaluateCriteria(brief.criteria, trimmed)
+  const met = results.filter((r) => r.met)
+  const unmet = results.filter((r) => !r.met)
   const satisfactory =
-    trimmed.length >= CAPABILITY_MIN_LENGTH && hits.length >= CAPABILITY_MIN_HITS
+    unmet.length === 0 && trimmed.length >= CAPABILITY_MIN_LENGTH
   const strengths = satisfactory
-    ? hits
-        .slice(0, 3)
-        .map((kw) => `Demonstrated "${kw}" in a realistic context.`)
-    : hits.length > 0
-      ? [`You demonstrated "${hits[0]}" — extend this across the whole task.`]
+    ? met
+        .slice(0, 2)
+        .map((r) => `You demonstrated "${r.label}".`)
+    : met.length > 0
+      ? [`You demonstrated "${met[0].label}" — extend this across the whole task.`]
       : ['You described an attempt — now connect it to the outcome.']
   const improvements = satisfactory
     ? ['Keep a copy of this work as portfolio evidence.']
     : [
-        `Aim for at least ${CAPABILITY_MIN_LENGTH} characters covering the full outcome, including ${missingKeywords(template, trimmed)
+        ...(trimmed.length < CAPABILITY_MIN_LENGTH
+          ? [
+              `Aim for at least ${CAPABILITY_MIN_LENGTH} characters describing what you produced and what it demonstrates.`,
+            ]
+          : []),
+        ...unmet
           .slice(0, 2)
-          .map((kw) => `"${kw}"`)
-          .join(' and ')}.`,
+          .map((r) => `Not yet demonstrated: ${r.label}.`),
       ]
   return {
     satisfactory,
