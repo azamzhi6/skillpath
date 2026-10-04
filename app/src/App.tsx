@@ -788,7 +788,7 @@ export default function App() {
             </div>
             {apiMode !== 'api' && (
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                Submitting needs the local API — your draft is saved.
+                Submitting requires an API connection — your draft is saved.
               </p>
             )}
           </div>
@@ -895,7 +895,7 @@ export default function App() {
             capability.
           </p>
           <p className="mt-3 rounded-xl border border-[#CBE3DD] bg-primary-tint px-4 py-3 text-[15px] leading-relaxed text-ink">
-            <strong className="text-primary-dark">SkillPath coach (mock):</strong>{' '}
+            <strong className="text-primary-dark">SkillPath coach:</strong>{' '}
             tell me what you want to learn. I will check your starting point,
             build your path and always show the next step.
           </p>
@@ -1160,8 +1160,9 @@ export default function App() {
                 Quick check of your starting point
               </h2>
               <p className="mb-4 mt-1 text-[15px] leading-relaxed text-muted">
-                Two short questions so the path starts at the right level. Mock
-                scoring — nothing leaves your browser.
+                Two short questions so the path starts at the right level.
+                Starting-point check — complete the activities to demonstrate
+                your capability.
               </p>
               <div className="grid gap-5">
                 {questions.map((q, qi) => (
@@ -1232,7 +1233,7 @@ export default function App() {
               ) : (
               <section className="rounded-2xl border border-line bg-white p-6">
                 <span className="mb-2 inline-block rounded-full bg-[#E7F4EE] px-2.5 py-0.5 text-xs font-semibold text-primary-dark">
-                  Personalised path · {path.level} · mock
+                  Personalised path · {path.level}
                 </span>
                 <h2 className="text-[22px] font-bold leading-snug tracking-tight text-ink">
                   {path.title}
@@ -1416,7 +1417,7 @@ export default function App() {
                   </div>
                   {apiMode !== 'api' && (
                     <p className="mt-2 text-sm leading-relaxed text-muted">
-                      Submitting needs the local API — your draft is saved.
+                      Submitting requires an API connection — your draft is saved.
                     </p>
                   )}
                 </section>
@@ -1480,7 +1481,7 @@ export default function App() {
                   onClick={restart}
                   className="rounded-[10px] border-2 border-line bg-white px-5 py-2.5 text-base font-semibold text-muted hover:border-primary hover:text-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary"
                 >
-                  Reset demo
+                  Start over
                 </button>
               </div>
             </div>
@@ -1488,8 +1489,8 @@ export default function App() {
         </main>
 
         <footer className="mt-8 text-center text-[13px] leading-relaxed text-muted">
-          SkillPath prototype — mock coaching, local demo data only. No account,
-          no external services. Local SQLite + Express API.
+          SkillPath — rule-based capability assessment with AI-assisted
+          learning support. No account required.
         </footer>
       </div>
     </div>

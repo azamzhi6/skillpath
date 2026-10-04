@@ -228,7 +228,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'SUMIFS walkthrough with examples',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Worked examples matched to your sales data.',
           },
         ],
@@ -265,7 +265,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Designing readable charts',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Shows how to present the result, not just compute it.',
           },
         ],
@@ -303,7 +303,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'HTML structure primer',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'The minimum structure behind every page.',
           },
         ],
@@ -335,7 +335,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Spacing and type for beginners',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Demonstrated on a page like yours.',
           },
         ],
@@ -367,7 +367,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Responsive basics checklist',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'A short checklist you apply to your own page.',
           },
         ],
@@ -408,7 +408,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Reading a dataset critically',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Builds the inspection habit first.',
           },
         ],
@@ -443,7 +443,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Missing-data decision guide',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Worked examples matched to your level.',
           },
         ],
@@ -479,7 +479,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'One-chart, one-finding method',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Keeps the first result small and defensible.',
           },
         ],
@@ -520,7 +520,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Starter guide matched to your goal',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Chosen for your stated outcome.',
           },
         ],
@@ -552,7 +552,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Worked example for your goal',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Shows the method before you practise alone.',
           },
         ],
@@ -586,7 +586,7 @@ const PATHS: Record<TemplateId, PathTemplate> = {
         resources: [
           {
             title: 'Practice task planner',
-            source: 'Mock coach library',
+            source: 'SkillPath library',
             why: 'Turns your goal into a demonstrable result.',
           },
         ],
