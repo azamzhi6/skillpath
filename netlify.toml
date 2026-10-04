@@ -2,17 +2,24 @@
 # Netlify Function + PostgreSQL (Netlify Database / Neon).
 [build]
   base = "app"
-  command = "npm install && npm run build"
+  command = "npm install && npm run build && npm run build:function"
   publish = "dist"
   functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "24"
 
-# Bundle the API function as ESM: the default CJS output cannot represent
-# the legitimate top-level await / import.meta usage in server/index.ts.
+# The API function is pre-bundled as ESM by netlify/build-function.mjs
+# (the Netlify esbuild bundler emits CommonJS, which cannot represent the
+# legitimate top-level await / import.meta usage in server/index.ts), so
+# deploy the generated api.mjs untouched. Only build outputs ever live in
+# netlify/functions; the source is netlify/src/api.mts (subdirectories are
+# ignored by function discovery).
 [functions]
-  node_bundler = "esbuild"
+  node_bundler = "none"
+  # db.ts loads schema.sql next to its own module (= next to api.mjs after
+  # bundling), so ship the generated copy alongside the function.
+  included_files = ["netlify/functions/schema.sql"]
 
 # Frontend API calls use relative /api/* paths; forward them to the function
 # so the same contract works locally (Vite proxy) and in production.

@@ -117,8 +117,12 @@ without one the API exits with a clear error message.
 ## Production deploy (Netlify)
 
 - Connect the repository, base directory `app`. Build command:
-  `npm install && npm run build`; publish directory `dist`; functions
-  directory `netlify/functions` (see `netlify.toml` at the repo root).
+  `npm install && npm run build && npm run build:function`; publish
+  directory `dist`; functions directory `netlify/functions` (see
+  `netlify.toml` at the repo root). `build:function` pre-bundles the `api`
+  function as ESM from `netlify/src/api.mts` (deployed with
+  `node_bundler = "none"`); only generated outputs ever live in
+  `netlify/functions`.
 - Node version: 24 (`NODE_VERSION=24`).
 - Add the Netlify database integration and expose its connection string as
   `NETLIFY_DATABASE_URL`. Tables are created automatically on first start.

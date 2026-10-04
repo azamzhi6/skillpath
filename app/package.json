@@ -16,6 +16,7 @@
     "test:capability": "node tests/capability-v2.mjs",
     "test": "npm run test:eval && npm run test:mastery && npm run test:capability && npm run test:db && npm run test:api",
     "build": "tsc && vite build",
+    "build:function": "node netlify/build-function.mjs",
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "0.28.2",
     "pg-mem": "^3.0.14",
     "tailwindcss": "^4.1.0",
     "typescript": "~5.8.3",

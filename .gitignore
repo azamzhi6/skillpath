@@ -21,3 +21,8 @@ app/server/data/
 
 # Phase 6 local secrets (never commit keys)
 .env
+
+# Generated Netlify function bundle (built at deploy time by
+# `npm run build:function`; never commit build outputs)
+app/netlify/functions/api.mjs
+app/netlify/functions/schema.sql
