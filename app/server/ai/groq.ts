@@ -1,7 +1,8 @@
 // Groq provider (Phase 6A/6B). OpenAI-compatible chat-completions API.
 // Key comes only from GROQ_API_KEY. Optional overrides: GROQ_MODEL,
 // GROQ_BASE_URL (default Groq cloud; overridable for tests/proxies),
-// GROQ_TIMEOUT_MS (default 25000).
+// GROQ_TIMEOUT_MS (default 8000: Netlify synchronous Functions enforce a
+// short execution limit, so the default stays safely inside it).
 
 import {
   buildFeedbackMessages,
@@ -25,7 +26,7 @@ import type {
 
 const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1'
 const DEFAULT_MODEL = 'openai/gpt-oss-20b'
-const DEFAULT_TIMEOUT_MS = 25000
+const DEFAULT_TIMEOUT_MS = 8000
 
 export interface GroqConfig {
   apiKey: string

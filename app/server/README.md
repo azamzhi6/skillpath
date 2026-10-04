@@ -1,7 +1,7 @@
-# SkillPath prototype API + database (Phase 3)
+# SkillPath API + database
 
-Thin local Express API backed by a local SQLite file (`better-sqlite3`).
-No auth, no cloud, no AI calls, no deployment.
+Thin Express API backed by PostgreSQL (`pg` pool). No auth, no cloud
+(except the database host), no AI calls except optional Groq.
 
 **Status: Phases 3–5 implemented; Phase 6A–6C implemented (Real-AI Learn
 content via Groq with deterministic mock fallback).**
@@ -12,7 +12,7 @@ Next planned work: **Phase 6D+** (not implemented).
 - Supported minimum: **Node.js >= 24** (see `engines` in `app/package.json`).
   The server runs TypeScript directly via Node's native type-stripping, which
   needs Node >= 23.6 unflagged; 24 LTS is the conservative baseline.
-  `better-sqlite3@13` requires Node >= 22; Express 5 requires Node >= 18.
+  `pg` requires Node >= 18; Express 5 requires Node >= 18.
 - Tested version: **Node.js v26.7.0**.
 
 ## Run
@@ -38,14 +38,17 @@ npm.cmd run dev
 
 - Frontend: http://localhost:5173
 - API health: http://localhost:5174/api/health
-- Database file: `app/server/data/skillpath.db` (gitignored, created on first run)
+- Database: PostgreSQL via `NETLIFY_DATABASE_URL` (production) or
+  `DATABASE_URL` (local development); schema is created automatically.
 
 ## Database initialization
 
-No manual step is required. On first API start the server creates
-`app/server/data/`, applies `schema.sql` (5 tables: learners, goals,
-diagnostics, paths, progress) and seeds the `demo-learner` record.
-If the database cannot be opened, the API exits with a clear error message.
+No manual schema step is required. On first API start the server applies
+`schema.sql` (learners, goals, diagnostics, paths, progress, submissions,
+feedback, capability_evidence, learner_criterion_mastery) and seeds the
+`demo-learner` record. Set `NETLIFY_DATABASE_URL` (production) or
+`DATABASE_URL` (local development) to a PostgreSQL connection string first —
+without one the API exits with a clear error message.
 
 ## Endpoints
 
@@ -100,14 +103,28 @@ If the database cannot be opened, the API exits with a clear error message.
 
 - On Windows use `npm.cmd` (PowerShell execution policy blocks `npm.ps1`).
 - npm v11+ blocks install scripts until approved. After `npm install`, run:
-  `npm.cmd install-scripts approve esbuild better-sqlite3`
-- Do NOT run `npm rebuild better-sqlite3`: without Python + build tools the
-  source compile fails. The downloaded prebuilt binary is all that is needed —
-  verify with `node -e "require('better-sqlite3')(':memory:')"` instead.
+  `npm.cmd install-scripts approve esbuild`
+- Local development needs PostgreSQL running and `DATABASE_URL` set (see
+  Fresh setup in `app/README.md`); `npm run test:db` uses pg-mem and needs
+  no database.
 
 ## Notes
 
-- The database directory `app/server/data/` is gitignored; the `.db` file is
-  local demo data only and is never committed.
-- If `better-sqlite3` ever fails to load in a new Node environment, do not
-  silently swap drivers — record the exact error and steer first.
+- Learner data lives in PostgreSQL in every environment; there is no local
+  database file. Set `NETLIFY_DATABASE_URL` (or `DATABASE_URL` locally) —
+  the server fails fast with a clear message when it is missing.
+
+## Production deploy (Netlify)
+
+- Connect the repository, base directory `app`. Build command:
+  `npm install && npm run build`; publish directory `dist`; functions
+  directory `netlify/functions` (see `netlify.toml` at the repo root).
+- Node version: 24 (`NODE_VERSION=24`).
+- Add the Netlify database integration and expose its connection string as
+  `NETLIFY_DATABASE_URL`. Tables are created automatically on first start.
+- Optional `GROQ_API_KEY` (without it the app runs in deterministic mock
+  mode, exactly as locally). AI calls time out after ~8s to fit serverless
+  execution limits; any AI failure falls back to deterministic content.
+- Health check: `GET /api/health`. Netlify serves the built React app from
+  its CDN; `/api/*` routes to the single `api` function wrapping the
+  existing Express application.

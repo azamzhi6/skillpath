@@ -1,0 +1,22 @@
+# SkillPath Netlify deployment: static Vite frontend + Express API as one
+# Netlify Function + PostgreSQL (Netlify Database / Neon).
+[build]
+  base = "app"
+  command = "npm install && npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "24"
+
+# Frontend API calls use relative /api/* paths; forward them to the function
+# so the same contract works locally (Vite proxy) and in production.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+# Required: NETLIFY_DATABASE_URL (provided by the Netlify database
+# integration) or DATABASE_URL for local PostgreSQL development.
+# Optional: GROQ_API_KEY (without it the app runs in deterministic mock
+# mode), GROQ_MODEL, GROQ_BASE_URL, GROQ_TIMEOUT_MS.

@@ -4,8 +4,8 @@
 content via Groq with deterministic mock fallback).**
 Next planned work: **Phase 6D+** (not implemented).
 
-Working SkillPath page with mock coaching logic. Persistence is a thin local
-Express API backed by SQLite (`better-sqlite3`); browser localStorage remains
+Working SkillPath page with mock coaching logic. Persistence is a thin
+Express API backed by PostgreSQL (`pg` pool); browser localStorage remains
 only as an offline fallback. No account, no external services.
 
 ## Run locally
@@ -36,7 +36,9 @@ npm.cmd run dev
 
 Open http://localhost:5173 in a browser.
 API health: http://localhost:5174/api/health.
-Database file: `app/server/data/skillpath.db` (gitignored, created on first run).
+Database: PostgreSQL via `DATABASE_URL` (local development) or
+`NETLIFY_DATABASE_URL` (production); tables are created automatically on
+first API start. See `server/README.md` for the Netlify deployment.
 
 ## Flow
 
@@ -45,7 +47,7 @@ diagnostic → Personalised path → Next action.
 Open any stage for the learning loop: Learn → Practise → Submit → Feedback →
 Retry/Continue → next stage. After all stages are satisfactory, a final
 capability demonstration records persistent evidence of ability.
-Progress persists in local SQLite via the thin Express API (`storage.ts`
+Progress persists in PostgreSQL via the thin Express API (`storage.ts`
 adapter seam); browser localStorage (`skillpath.prototype.v1`) is kept only as
 an offline fallback and as the one-time migration source.
 
@@ -101,10 +103,11 @@ npm.cmd run build
 2. Clone the repository.
 3. `Set-Location app` then `npm.cmd install`.
 4. Approve install scripts (npm v11+ blocks them otherwise):
-   `npm.cmd install-scripts approve esbuild better-sqlite3`
-5. `npm.cmd run dev:api` — creates and seeds `server/data/skillpath.db`
-   automatically on first start; no manual database step exists.
-6. `npm.cmd run dev` (second terminal).
+   `npm.cmd install-scripts approve esbuild`
+5. Start PostgreSQL locally (any recent version) and set `DATABASE_URL` to
+   its connection string — tables are created and seeded automatically on
+   first API start; no manual database step exists.
+6. `npm.cmd run dev:api` (second terminal: `npm.cmd run dev`).
 7. Open http://localhost:5174/api/health → expect `{ "ok": true }`.
 8. Open http://localhost:5173 and run the journey: goal → clarification →
    diagnostic → path → tick a stage done.
@@ -142,14 +145,15 @@ npm.cmd run build
 
 - `npm.ps1 cannot be loaded` → use `npm.cmd` on Windows.
 - Vite/esbuild missing binary after install → approve scripts (step 4) and
-  reinstall; do NOT `npm rebuild better-sqlite3` without Python + build tools.
+  reinstall.
+- `npm.cmd run test` (evaluator, mastery, capability, database, API suites).
 - Port in use → stop the other process or set `PORT` (API) before `dev:api`.
-- `skillpath.db` locked/corrupt → API exits with the file path in the message;
-  delete `server/data/` to start fresh (demo data only).
+- No database connection → API exits with which variable to set; point
+  `DATABASE_URL` at a running PostgreSQL (demo data only, safe to recreate).
 
 ## Mocked vs future
 
 Mocked now: coach responses, scoring, resources, authentication (demo
 learner), resource discovery. Future MVP/production would add: real auth,
-multi-learner goals, Postgres/Docker/cloud, admin, analytics — none of that
-is in this prototype.
+multi-learner goals, Docker/cloud beyond Netlify static+functions, admin,
+analytics — none of that is in this prototype.

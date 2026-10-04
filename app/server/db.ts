@@ -1,9 +1,10 @@
-// SQLite setup for the SkillPath prototype (Phase 3).
-// better-sqlite3, local file only. No ORM, no migrations framework.
+// PostgreSQL persistence (Netlify migration).
+// pg Pool, async throughout. Same exported function names and contracts as
+// the former SQLite version; only driver mechanics changed. No ORM.
 
-import Database from 'better-sqlite3'
+import { Pool } from 'pg'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, mkdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -15,53 +16,120 @@ import {
 
 export const DEMO_LEARNER_ID = 'demo-learner'
 
-const here = dirname(fileURLToPath(import.meta.url))
-const dataDir = join(here, 'data')
-mkdirSync(dataDir, { recursive: true })
+interface DbClient {
+  query: <T extends Record<string, any> = Record<string, any>>(
+    text: string,
+    params?: any[],
+  ) => Promise<{ rows: T[] }>
+  release: () => void
+}
 
-const dbPath = join(dataDir, 'skillpath.db')
+interface DbPoolLike {
+  query: <T extends Record<string, any> = Record<string, any>>(
+    text: string,
+    params?: any[],
+  ) => Promise<{ rows: T[] }>
+  connect: () => Promise<DbClient>
+}
 
-let db: InstanceType<typeof Database>
-try {
-  db = new Database(dbPath)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
+function connectionString(): string {
+  return (
+    process.env.NETLIFY_DATABASE_URL ?? process.env.DATABASE_URL ?? ''
+  ).trim()
+}
 
-  const schema = readFileSync(join(here, 'schema.sql'), 'utf8')
-  db.exec(schema)
-
-  db.prepare(
-    'INSERT OR IGNORE INTO learners (id, display_name) VALUES (?, ?)',
-  ).run(DEMO_LEARNER_ID, 'Demo Learner')
-
-  // Additive R1 migration for pre-existing databases: existing rows behave
-  // as 'mock' via the column default.
-  const feedbackCols = db
-    .prepare(`PRAGMA table_info(feedback)`)
-    .all() as { name: string }[]
-  if (!feedbackCols.some((c) => c.name === 'prose_source')) {
-    db.exec(
-      `ALTER TABLE feedback ADD COLUMN prose_source TEXT NOT NULL DEFAULT 'mock'`,
-    )
+export function databaseLabel(): string {
+  if ((process.env.NETLIFY_DATABASE_URL ?? '').trim() !== '') {
+    return 'postgresql (NETLIFY_DATABASE_URL)'
   }
+  if ((process.env.DATABASE_URL ?? '').trim() !== '') {
+    return 'postgresql (DATABASE_URL)'
+  }
+  return 'postgresql (no connection string configured)'
+}
 
-  // Additive R2 migration: learner-confirmed parsed goal fields. Existing
-  // rows keep NULLs, which the application reads as "not parsed".
-  const goalCols = db
-    .prepare(`PRAGMA table_info(goals)`)
-    .all() as { name: string }[]
-  for (const column of ['subject', 'desired_outcome', 'timeframe']) {
-    if (!goalCols.some((c) => c.name === column)) {
-      db.exec(`ALTER TABLE goals ADD COLUMN ${column} TEXT`)
+let activePool: DbPoolLike | null = null
+let testOverride: DbPoolLike | null = null
+
+/** Test seam only: run the data layer against another pg-compatible pool. */
+export function overridePoolForTests(pool: DbPoolLike | null): void {
+  testOverride = pool
+}
+
+function pool(): DbPoolLike {
+  if (testOverride) return testOverride
+  if (!activePool) {
+    const connection = connectionString()
+    if (connection === '') {
+      throw new Error(
+        'Missing database connection string. Set NETLIFY_DATABASE_URL or DATABASE_URL.',
+      )
     }
+    activePool = new Pool({
+      connectionString: connection,
+      max: 2,
+      idleTimeoutMillis: 10000,
+      // Cold serverless databases (e.g. suspended Neon compute) can take
+      // well over 5s to accept the first connection; fail only past 30s.
+      connectionTimeoutMillis: 30000,
+    })
   }
-} catch (err) {
-  console.error(
-    `SkillPath API cannot start: failed to open the SQLite database at ${dbPath}: ${
-      err instanceof Error ? err.message : String(err)
-    }`,
+  return activePool
+}
+
+async function withTransaction<T>(
+  fn: (client: DbClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool().connect()
+  try {
+    await client.query('BEGIN')
+    const result = await fn(client)
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // Rollback failure: surface the original error.
+    }
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+const here = dirname(fileURLToPath(import.meta.url))
+
+/** Create tables and seed the demo learner. Safe to run on every startup. */
+export async function initDb(): Promise<void> {
+  // Create each missing table explicitly rather than relying solely on
+  // IF NOT EXISTS: identical outcome on PostgreSQL, and robust across
+  // lightweight pg-compatible clients used in tests.
+  const existing = new Set(
+    (
+      await pool().query<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
+      )
+    ).rows.map((row) => row.table_name),
   )
-  process.exit(1)
+  const schema = readFileSync(join(here, 'schema.sql'), 'utf8')
+  // schema.sql uses full-line comments only; no semicolons inside strings.
+  const statements = schema
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('--'))
+    .join('\n')
+    .split(';')
+    .map((raw) => raw.trim())
+    .filter((statement) => statement !== '')
+  for (const statement of statements) {
+    const table = /CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i.exec(statement)?.[1]
+    if (table && existing.has(table)) continue
+    await pool().query(statement)
+  }
+  await pool().query(
+    'INSERT INTO learners (id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [DEMO_LEARNER_ID, 'Demo Learner'],
+  )
 }
 
 export interface StoredSnapshot {
@@ -84,66 +152,64 @@ export interface StoredSnapshot {
   } | null
 }
 
-const upsertState = db.transaction((s: StoredSnapshot, now: string) => {
-  const goalId = 'goal-demo'
-  db.prepare(
-    `INSERT INTO goals (id, learner_id, raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe, created_at, updated_at)
-     VALUES (@id, @learnerId, @rawText, @template, @experience, @hoursPerWeek, @subject, @desiredOutcome, @timeframe, @now, @now)
-     ON CONFLICT(id) DO UPDATE SET
-       raw_text = excluded.raw_text,
-       template = excluded.template,
-       experience = excluded.experience,
-       hours_per_week = excluded.hours_per_week,
-       subject = excluded.subject,
-       desired_outcome = excluded.desired_outcome,
-       timeframe = excluded.timeframe,
-       updated_at = excluded.updated_at`,
-  ).run({
-    id: goalId,
-    learnerId: DEMO_LEARNER_ID,
-    rawText: s.goalText,
-    template: s.template,
-    experience: s.experience,
-    hoursPerWeek: s.hoursPerWeek,
-    subject: s.parsedGoal ? s.parsedGoal.subject : null,
-    desiredOutcome: s.parsedGoal ? s.parsedGoal.desiredOutcome : null,
-    timeframe: s.parsedGoal ? s.parsedGoal.timeframe : null,
-    now,
+export async function saveSnapshot(snapshot: StoredSnapshot): Promise<void> {
+  const s = snapshot
+  const now = new Date().toISOString()
+  await withTransaction(async (db) => {
+    const goalId = 'goal-demo'
+    await db.query(
+      `INSERT INTO goals (id, learner_id, raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+       ON CONFLICT(id) DO UPDATE SET
+         raw_text = excluded.raw_text,
+         template = excluded.template,
+         experience = excluded.experience,
+         hours_per_week = excluded.hours_per_week,
+         subject = excluded.subject,
+         desired_outcome = excluded.desired_outcome,
+         timeframe = excluded.timeframe,
+         updated_at = excluded.updated_at`,
+      [
+        goalId,
+        DEMO_LEARNER_ID,
+        s.goalText,
+        s.template,
+        s.experience,
+        s.hoursPerWeek,
+        s.parsedGoal ? s.parsedGoal.subject : null,
+        s.parsedGoal ? s.parsedGoal.desiredOutcome : null,
+        s.parsedGoal ? s.parsedGoal.timeframe : null,
+        now,
+      ],
+    )
+    await db.query(
+      `INSERT INTO diagnostics (goal_id, answers_json, score, level)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT(goal_id) DO UPDATE SET
+         answers_json = excluded.answers_json,
+         score = excluded.score,
+         level = excluded.level`,
+      [goalId, JSON.stringify(s.answers), s.score, s.level],
+    )
+    await db.query(
+      `INSERT INTO paths (goal_id, title, outcome, level, stages_json)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT(goal_id) DO UPDATE SET
+         title = excluded.title,
+         outcome = excluded.outcome,
+         level = excluded.level,
+         stages_json = excluded.stages_json`,
+      [goalId, s.pathTitle, s.pathOutcome, s.pathLevel, JSON.stringify(s.stages)],
+    )
+    await db.query(
+      `INSERT INTO progress (goal_id, completed_stage_ids_json, updated_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT(goal_id) DO UPDATE SET
+         completed_stage_ids_json = excluded.completed_stage_ids_json,
+         updated_at = excluded.updated_at`,
+      [goalId, JSON.stringify(s.completedStageIds), now],
+    )
   })
-  db.prepare(
-    `INSERT INTO diagnostics (goal_id, answers_json, score, level)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(goal_id) DO UPDATE SET
-       answers_json = excluded.answers_json,
-       score = excluded.score,
-       level = excluded.level`,
-  ).run(goalId, JSON.stringify(s.answers), s.score, s.level)
-  db.prepare(
-    `INSERT INTO paths (goal_id, title, outcome, level, stages_json)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(goal_id) DO UPDATE SET
-       title = excluded.title,
-       outcome = excluded.outcome,
-       level = excluded.level,
-       stages_json = excluded.stages_json`,
-  ).run(
-    goalId,
-    s.pathTitle,
-    s.pathOutcome,
-    s.pathLevel,
-    JSON.stringify(s.stages),
-  )
-  db.prepare(
-    `INSERT INTO progress (goal_id, completed_stage_ids_json, updated_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT(goal_id) DO UPDATE SET
-       completed_stage_ids_json = excluded.completed_stage_ids_json,
-       updated_at = excluded.updated_at`,
-  ).run(goalId, JSON.stringify(s.completedStageIds), now)
-})
-
-export function saveSnapshot(snapshot: StoredSnapshot): void {
-  upsertState(snapshot, new Date().toISOString())
 }
 
 interface GoalRow {
@@ -173,20 +239,33 @@ interface ProgressRow {
   completed_stage_ids_json: string
 }
 
-export function loadSnapshot(): StoredSnapshot | null {
-  const goal = db
-    .prepare('SELECT raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe FROM goals WHERE id = ?')
-    .get('goal-demo') as GoalRow | undefined
+export async function loadSnapshot(): Promise<StoredSnapshot | null> {
+  const db = pool()
+  const goal = (
+    await db.query<GoalRow>(
+      'SELECT raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe FROM goals WHERE id = $1',
+      ['goal-demo'],
+    )
+  ).rows[0]
   if (!goal) return null
-  const diagnostic = db
-    .prepare('SELECT answers_json, score, level FROM diagnostics WHERE goal_id = ?')
-    .get('goal-demo') as DiagnosticRow | undefined
-  const path = db
-    .prepare('SELECT title, outcome, level, stages_json FROM paths WHERE goal_id = ?')
-    .get('goal-demo') as PathRow | undefined
-  const progress = db
-    .prepare('SELECT completed_stage_ids_json FROM progress WHERE goal_id = ?')
-    .get('goal-demo') as ProgressRow | undefined
+  const diagnostic = (
+    await db.query<DiagnosticRow>(
+      'SELECT answers_json, score, level FROM diagnostics WHERE goal_id = $1',
+      ['goal-demo'],
+    )
+  ).rows[0]
+  const path = (
+    await db.query<PathRow>(
+      'SELECT title, outcome, level, stages_json FROM paths WHERE goal_id = $1',
+      ['goal-demo'],
+    )
+  ).rows[0]
+  const progress = (
+    await db.query<ProgressRow>(
+      'SELECT completed_stage_ids_json FROM progress WHERE goal_id = $1',
+      ['goal-demo'],
+    )
+  ).rows[0]
   return {
     goalText: goal.raw_text,
     template: goal.template,
@@ -215,18 +294,20 @@ export function loadSnapshot(): StoredSnapshot | null {
   }
 }
 
-export function clearAll(): void {
-  const clear = db.transaction(() => {
-    db.prepare('DELETE FROM learner_criterion_mastery').run()
-    db.prepare('DELETE FROM capability_evidence WHERE goal_id = ?').run('goal-demo')
-    db.prepare('DELETE FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = ?)').run('goal-demo')
-    db.prepare('DELETE FROM submissions WHERE goal_id = ?').run('goal-demo')
-    db.prepare('DELETE FROM progress WHERE goal_id = ?').run('goal-demo')
-    db.prepare('DELETE FROM paths WHERE goal_id = ?').run('goal-demo')
-    db.prepare('DELETE FROM diagnostics WHERE goal_id = ?').run('goal-demo')
-    db.prepare('DELETE FROM goals WHERE id = ?').run('goal-demo')
+export async function clearAll(): Promise<void> {
+  await withTransaction(async (db) => {
+    await db.query('DELETE FROM learner_criterion_mastery', [])
+    await db.query('DELETE FROM capability_evidence WHERE goal_id = $1', ['goal-demo'])
+    await db.query(
+      'DELETE FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = $1)',
+      ['goal-demo'],
+    )
+    await db.query('DELETE FROM submissions WHERE goal_id = $1', ['goal-demo'])
+    await db.query('DELETE FROM progress WHERE goal_id = $1', ['goal-demo'])
+    await db.query('DELETE FROM paths WHERE goal_id = $1', ['goal-demo'])
+    await db.query('DELETE FROM diagnostics WHERE goal_id = $1', ['goal-demo'])
+    await db.query('DELETE FROM goals WHERE id = $1', ['goal-demo'])
   })
-  clear()
 }
 
 export interface NewSubmission {
@@ -304,25 +385,52 @@ function rowToMastery(row: MasteryRowShape): MasteryRow {
   }
 }
 
-// Plain (non-transactional) helper: must run inside the caller's
-// transaction so submission + mastery succeed or fail together.
-function upsertMasteryRow(
+export async function saveSubmission(
+  s: NewSubmission,
+  outcomes: CriterionOutcome[],
+  template: string,
+): Promise<{ id: string; attempt: number }> {
+  const now = new Date().toISOString()
+  return withTransaction(async (db) => {
+    const count = (
+      await db.query<{ n: string }>(
+        'SELECT COUNT(*) AS n FROM submissions WHERE goal_id = $1 AND stage_id = $2 AND kind = $3',
+        ['goal-demo', s.stageId, s.kind],
+      )
+    ).rows[0]
+    const id = randomUUID()
+    const attempt = Number(count?.n ?? 0) + 1
+    await db.query(
+      `INSERT INTO submissions (id, goal_id, stage_id, kind, response, attempt, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, 'goal-demo', s.stageId, s.kind, s.response, attempt, now],
+    )
+    for (const outcome of outcomes) {
+      await upsertMasteryRow(db, template, s.stageId, outcome, now)
+    }
+    return { id, attempt }
+  })
+}
+
+async function upsertMasteryRow(
+  db: DbClient,
   template: string,
   stageId: string,
   outcome: CriterionOutcome,
   now: string,
-): void {
-  const existing = db
-    .prepare(
-      'SELECT * FROM learner_criterion_mastery WHERE template = ? AND stage_id = ? AND criterion_id = ?',
+): Promise<void> {
+  const existing = (
+    await db.query<MasteryRowShape>(
+      'SELECT * FROM learner_criterion_mastery WHERE template = $1 AND stage_id = $2 AND criterion_id = $3',
+      [template, stageId, outcome.criterionId],
     )
-    .get(template, stageId, outcome.criterionId) as MasteryRowShape | undefined
+  ).rows[0]
   const next = existing
     ? nextMasteryRow(rowToMastery(existing), outcome.met, now)
     : initialMasteryRow(template, stageId, outcome.criterionId, outcome.met, now)
-  db.prepare(
+  await db.query(
     `INSERT INTO learner_criterion_mastery (id, template, stage_id, criterion_id, attempts, passes, failures, consecutive_failures, last_result, first_seen_at, last_assessed_at, mastery_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT(template, stage_id, criterion_id) DO UPDATE SET
        attempts = excluded.attempts,
        passes = excluded.passes,
@@ -331,135 +439,111 @@ function upsertMasteryRow(
        last_result = excluded.last_result,
        last_assessed_at = excluded.last_assessed_at,
        mastery_status = excluded.mastery_status`,
-  ).run(
-    existing ? existing.id : randomUUID(),
-    next.template,
-    next.stageId,
-    next.criterionId,
-    next.attempts,
-    next.passes,
-    next.failures,
-    next.consecutiveFailures,
-    next.lastResult,
-    next.firstSeenAt,
-    next.lastAssessedAt,
-    next.masteryStatus,
+    [
+      existing ? existing.id : randomUUID(),
+      next.template,
+      next.stageId,
+      next.criterionId,
+      next.attempts,
+      next.passes,
+      next.failures,
+      next.consecutiveFailures,
+      next.lastResult,
+      next.firstSeenAt,
+      next.lastAssessedAt,
+      next.masteryStatus,
+    ],
   )
 }
 
-const insertSubmission = db.transaction(
-  (
-    s: NewSubmission,
-    outcomes: CriterionOutcome[],
-    template: string,
-    now: string,
-  ): { id: string; attempt: number } => {
-    const count = db
-      .prepare(
-        'SELECT COUNT(*) AS n FROM submissions WHERE goal_id = ? AND stage_id = ? AND kind = ?',
-      )
-      .get('goal-demo', s.stageId, s.kind) as { n: number }
-    const id = randomUUID()
-    const attempt = count.n + 1
-    db.prepare(
-      `INSERT INTO submissions (id, goal_id, stage_id, kind, response, attempt, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, 'goal-demo', s.stageId, s.kind, s.response, attempt, now)
-    for (const outcome of outcomes) {
-      upsertMasteryRow(template, s.stageId, outcome, now)
-    }
-    return { id, attempt }
-  },
-)
-
-export function saveSubmission(
-  s: NewSubmission,
-  outcomes: CriterionOutcome[],
-  template: string,
-): { id: string; attempt: number } {
-  return insertSubmission(s, outcomes, template, new Date().toISOString())
+export async function loadMastery(): Promise<MasteryRow[]> {
+  const rows = (
+    await pool().query<MasteryRowShape>(
+      'SELECT * FROM learner_criterion_mastery ORDER BY template, stage_id, criterion_id',
+    )
+  ).rows
+  return rows.map(rowToMastery)
 }
 
-export function loadMastery(): MasteryRow[] {
-  return (
-    db
-      .prepare('SELECT * FROM learner_criterion_mastery ORDER BY template, stage_id, criterion_id')
-      .all() as MasteryRowShape[]
-  ).map(rowToMastery)
-}
-
-export function saveFeedback(
+export async function saveFeedback(
   submissionId: string,
   verdict: NewSubmission['verdict'],
   strengths: string,
   improvements: string,
   nextAction: string,
   proseSource: 'ai' | 'mock',
-): void {
-  db.prepare(
+): Promise<void> {
+  await pool().query(
     `INSERT INTO feedback (id, submission_id, verdict, strengths, improvements, next_action, prose_source, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    randomUUID(),
-    submissionId,
-    verdict,
-    strengths,
-    improvements,
-    nextAction,
-    proseSource,
-    new Date().toISOString(),
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      randomUUID(),
+      submissionId,
+      verdict,
+      strengths,
+      improvements,
+      nextAction,
+      proseSource,
+      new Date().toISOString(),
+    ],
   )
 }
 
-export function saveEvidence(
+export async function saveEvidence(
   submissionId: string,
   capability: string,
   result: string,
   evidence: string,
-): string {
+): Promise<string> {
   const id = randomUUID()
-  db.prepare(
+  await pool().query(
     `INSERT INTO capability_evidence (id, goal_id, submission_id, capability, result, evidence, demonstrated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, 'goal-demo', submissionId, capability, result, evidence, new Date().toISOString())
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, 'goal-demo', submissionId, capability, result, evidence, new Date().toISOString()],
+  )
   return id
 }
 
-export function loadLearning(): LearningBlock {
-  const submissions = db
-    .prepare(
-      'SELECT id, stage_id AS stageId, kind, response, attempt, created_at AS createdAt FROM submissions WHERE goal_id = ? ORDER BY created_at, rowid',
+export async function loadLearning(): Promise<LearningBlock> {
+  const db = pool()
+  const submissions = (
+    await db.query<StoredSubmission>(
+      'SELECT id, stage_id AS "stageId", kind, response, attempt, created_at AS "createdAt" FROM submissions WHERE goal_id = $1 ORDER BY created_at, id',
+      ['goal-demo'],
     )
-    .all('goal-demo') as StoredSubmission[]
-  const feedback = db
-    .prepare(
-      'SELECT submission_id AS submissionId, verdict, strengths, improvements, next_action AS nextAction, prose_source AS proseSource FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = ?)',
+  ).rows
+  const feedback = (
+    await db.query<StoredFeedback>(
+      'SELECT submission_id AS "submissionId", verdict, strengths, improvements, next_action AS "nextAction", prose_source AS "proseSource" FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = $1)',
+      ['goal-demo'],
     )
-    .all('goal-demo') as StoredFeedback[]
-  const evidence = db
-    .prepare(
-      'SELECT id, submission_id AS submissionId, capability, result, evidence, demonstrated_at AS demonstratedAt FROM capability_evidence WHERE goal_id = ? ORDER BY demonstrated_at DESC, rowid DESC',
+  ).rows
+  const evidence = (
+    await db.query<StoredEvidence>(
+      'SELECT id, submission_id AS "submissionId", capability, result, evidence, demonstrated_at AS "demonstratedAt" FROM capability_evidence WHERE goal_id = $1 ORDER BY demonstrated_at DESC, id DESC',
+      ['goal-demo'],
     )
-    .all('goal-demo') as StoredEvidence[]
-  return { submissions, feedback, evidence, mastery: loadMastery() }
+  ).rows
+  return { submissions, feedback, evidence, mastery: await loadMastery() }
 }
 
-export function dbFilePath(): string {
-  return dbPath
+export async function journeyExists(): Promise<boolean> {
+  const rows = (
+    await pool().query<{ ok: number }>('SELECT 1 AS ok FROM goals WHERE id = $1', [
+      'goal-demo',
+    ])
+  ).rows
+  return rows.length > 0
 }
 
-export function journeyExists(): boolean {
-  const row = db
-    .prepare('SELECT 1 AS ok FROM goals WHERE id = ?')
-    .get('goal-demo') as { ok: number } | undefined
-  return row !== undefined
-}
-
-export function loadGoalText(): string {
-  const row = db
-    .prepare('SELECT raw_text AS rawText FROM goals WHERE id = ?')
-    .get('goal-demo') as { rawText: string } | undefined
-  return row ? row.rawText : ''
+export async function loadGoalText(): Promise<string> {
+  const rows = (
+    await pool().query<{ rawText: string }>(
+      'SELECT raw_text AS "rawText" FROM goals WHERE id = $1',
+      ['goal-demo'],
+    )
+  ).rows
+  return rows.length > 0 ? rows[0].rawText : ''
 }
 
 export interface StageInfo {
@@ -469,10 +553,14 @@ export interface StageInfo {
   criterionIds: string[]
 }
 
-export function loadStageInfo(stageId: string): StageInfo | null {
-  const row = db
-    .prepare('SELECT stages_json AS stagesJson FROM paths WHERE goal_id = ?')
-    .get('goal-demo') as { stagesJson: string } | undefined
+export async function loadStageInfo(stageId: string): Promise<StageInfo | null> {
+  const rows = (
+    await pool().query<{ stagesJson: string }>(
+      'SELECT stages_json AS "stagesJson" FROM paths WHERE goal_id = $1',
+      ['goal-demo'],
+    )
+  ).rows
+  const row = rows[0]
   if (!row) return null
   try {
     const stages = JSON.parse(row.stagesJson) as {

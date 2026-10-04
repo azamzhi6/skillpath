@@ -4,12 +4,14 @@
 
 import express from 'express'
 import type { NextFunction, Request, Response } from 'express'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { loadLocalEnv } from './ai/env.ts'
 import { GroqProvider, groqConfigFromEnv } from './ai/groq.ts'
 import type { AiProvider } from './ai/provider.ts'
 import {
   clearAll,
-  dbFilePath,
+  initDb,
   journeyExists,
   loadGoalText,
   loadLearning,
@@ -27,7 +29,13 @@ import type { CriterionOutcome, MasteryRow } from './mastery.ts'
 
 loadLocalEnv()
 
+await initDb()
+
 const PORT = Number(process.env.PORT ?? 5174)
+// Render and similar platforms require binding to all interfaces on their
+// assigned port. Local development is unaffected: localhost still reaches
+// the server, and HOST can still be overridden if ever needed.
+const HOST = process.env.HOST ?? '0.0.0.0'
 const app = express()
 app.use(express.json({ limit: '256kb' }))
 
@@ -43,23 +51,23 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.get('/api/state', (_req, res) => {
-  res.json({ state: loadSnapshot(), learning: loadLearning() })
+app.get('/api/state', async (_req, res) => {
+  res.json({ state: await loadSnapshot(), learning: await loadLearning() })
 })
 
-app.put('/api/state', (req, res) => {
+app.put('/api/state', async (req, res) => {
   const body = req.body as { state?: unknown }
   const parsed = parseSnapshot(body.state)
   if (!parsed) {
     res.status(400).json({ error: 'Invalid state snapshot' })
     return
   }
-  saveSnapshot(parsed)
+  await saveSnapshot(parsed)
   res.json({ ok: true })
 })
 
-app.delete('/api/state', (_req, res) => {
-  clearAll()
+app.delete('/api/state', async (_req, res) => {
+  await clearAll()
   res.json({ ok: true })
 })
 
@@ -165,7 +173,7 @@ const SUBMISSION_VERDICTS = ['satisfactory', 'retry', 'remedial'] as const
 
 app.post('/api/submissions', async (req, res) => {
   try {
-    if (!journeyExists()) {
+    if (!(await journeyExists())) {
       res.status(400).json({ error: 'No active learning journey' })
       return
     }
@@ -183,14 +191,14 @@ app.post('/api/submissions', async (req, res) => {
         res.status(400).json({ error: 'Invalid template for criterion data' })
         return
       }
-      const stage = loadStageInfo(parsed.submission.stageId)
+      const stage = await loadStageInfo(parsed.submission.stageId)
       const knownIds = new Set(stage ? stage.criterionIds : [])
       if (!parsed.criteria.every((c) => knownIds.has(c.criterionId))) {
         res.status(400).json({ error: 'Unknown criterion ID for stage' })
         return
       }
     }
-    const { id, attempt } = saveSubmission(
+    const { id, attempt } = await saveSubmission(
       parsed.submission,
       parsed.criteria,
       parsed.template,
@@ -203,10 +211,10 @@ app.post('/api/submissions', async (req, res) => {
     let proseSource: 'ai' | 'mock' = 'mock'
     if (learnProvider && learnProvider.isConfigured()) {
       try {
-        const stage = loadStageInfo(parsed.submission.stageId)
+        const stage = await loadStageInfo(parsed.submission.stageId)
         const prose = await learnProvider.generateFeedbackProse({
           input: {
-            goalText: loadGoalText(),
+            goalText: await loadGoalText(),
             stageTitle: stage?.title ?? parsed.submission.stageId,
             stageKind: stage?.kind ?? parsed.submission.kind,
             response: parsed.submission.response,
@@ -237,7 +245,7 @@ app.post('/api/submissions', async (req, res) => {
     )
     let evidenceId: string | null = null
     if (parsed.evidence) {
-      evidenceId = saveEvidence(
+      evidenceId = await saveEvidence(
         id,
         parsed.evidence.capability,
         parsed.evidence.result,
@@ -253,7 +261,7 @@ app.post('/api/submissions', async (req, res) => {
         nextAction,
         proseSource,
       },
-      mastery: loadMasteryFor(parsed.template, parsed.submission.stageId),
+      mastery: await loadMasteryFor(parsed.template, parsed.submission.stageId),
       evidenceId,
     })
   } catch {
@@ -370,8 +378,11 @@ function parseCriteriaList(value: unknown): CriterionOutcome[] | null {
   return outcomes
 }
 
-function loadMasteryFor(template: string, stageId: string): MasteryRow[] {
-  return loadMastery().filter(
+async function loadMasteryFor(
+  template: string,
+  stageId: string,
+): Promise<MasteryRow[]> {
+  return (await loadMastery()).filter(
     (row) => row.template === template && row.stageId === stageId,
   )
 }
@@ -442,7 +453,19 @@ function parseSnapshot(value: unknown): StoredSnapshot | null {
   }
 }
 
-app.listen(PORT, 'localhost', () => {
-  console.log(`SkillPath API listening on http://localhost:${PORT}`)
-  console.log(`SQLite file: ${dbFilePath()}`)
-})
+// In serverless deployments (Netlify Functions) the platform serves the
+// built frontend from its CDN and invokes this Express app per request, so
+// static-file serving is intentionally absent here — see netlify.toml.
+export default app
+
+// Listen only when executed directly (`node server/index.ts`). Importers
+// (notably the Netlify Function wrapper) get the app without side effects.
+const isDirectRun =
+  !!process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+if (isDirectRun) {
+  app.listen(PORT, HOST, () => {
+    console.log(`SkillPath API listening on http://${HOST}:${PORT}`)
+    console.log(`PostgreSQL database ready`)
+  })
+}
