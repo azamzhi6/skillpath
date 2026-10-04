@@ -9,6 +9,11 @@
 [build.environment]
   NODE_VERSION = "24"
 
+# Bundle the API function as ESM: the default CJS output cannot represent
+# the legitimate top-level await / import.meta usage in server/index.ts.
+[functions]
+  node_bundler = "esbuild"
+
 # Frontend API calls use relative /api/* paths; forward them to the function
 # so the same contract works locally (Vite proxy) and in production.
 [[redirects]]
