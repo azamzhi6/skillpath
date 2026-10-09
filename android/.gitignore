@@ -1,0 +1,28 @@
+# Bubblewrap/TWA generated outputs. Everything here except
+# twa-manifest.json (and this file) is reproducible via:
+#   bubblewrap update --manifest ./twa-manifest.json --skipVersionUpgrade
+#   bubblewrap build --manifest ./twa-manifest.json [signing flags]
+# Do NOT commit keystores, passwords, or signing credentials (kept outside Git).
+
+# Generated Gradle project (app module, wrapper, settings).
+/app/
+/gradle/
+gradlew
+gradlew.bat
+settings.gradle
+build.gradle
+gradle.properties
+
+# Gradle caches and logs.
+/.gradle/
+/build/
+*.log
+
+# Bubblewrap regeneration markers and derived assets.
+manifest-checksum.txt
+store_icon.png
+
+# Signed/unsigned binaries — delivered separately, never committed.
+*.apk
+*.aab
+*.idsig

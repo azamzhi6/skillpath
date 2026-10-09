@@ -1,0 +1,36 @@
+{
+  "packageId": "app.skillpathng.twa",
+  "host": "skillpathng.netlify.app",
+  "name": "SkillPath",
+  "launcherName": "SkillPath",
+  "display": "standalone",
+  "themeColor": "#0F766E",
+  "themeColorDark": "#0F766E",
+  "navigationColor": "#0F766E",
+  "navigationColorDark": "#0F766E",
+  "navigationDividerColor": "#0F766E",
+  "navigationDividerColorDark": "#0F766E",
+  "backgroundColor": "#0F766E",
+  "enableNotifications": false,
+  "startUrl": "/",
+  "iconUrl": "https://skillpathng.netlify.app/icons/icon-512.png",
+  "maskableIconUrl": "https://skillpathng.netlify.app/icons/maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "C:/Users/IBRAHIM/.bubblewrap-keys/skillpath-release.keystore",
+    "alias": "skillpath"
+  },
+  "appVersion": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://skillpathng.netlify.app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "enableSiteSettingsShortcut": true,
+  "fingerprints": [
+    {
+      "name": "skillpath-release",
+      "value": "06:3C:76:FC:0E:77:AF:65:31:13:30:38:A9:C7:85:1B:AE:02:80:0E:F1:76:E6:6E:26:7E:2F:B3:9F:9A:D7:2A"
+    }
+  ]
+}
