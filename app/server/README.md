@@ -1,10 +1,13 @@
 # SkillPath API + database
 
-Thin Express API backed by PostgreSQL (`pg` pool). No auth, no cloud
+Thin Express API backed by PostgreSQL (`pg` pool). No cloud
 (except the database host), no AI calls except optional Groq.
+Authentication: bcryptjs passwords, opaque HttpOnly session cookies,
+per-learner authorization, explicit demo sessions.
 
 **Status: Phases 3–5 implemented; Phase 6A–6C implemented (Real-AI Learn
-content via Groq with deterministic mock fallback).**
+content via Groq with deterministic mock fallback); Phase 1 implemented
+(learner accounts, sessions, per-learner isolation, demo sessions).**
 Next planned work: **Phase 6D+** (not implemented).
 
 ## Node version
@@ -45,17 +48,30 @@ npm.cmd run dev
 
 No manual schema step is required. On first API start the server applies
 `schema.sql` (learners, goals, diagnostics, paths, progress, submissions,
-feedback, capability_evidence, learner_criterion_mastery) and seeds the
-`demo-learner` record. Set `NETLIFY_DATABASE_URL` (production) or
+feedback, capability_evidence, learner_criterion_mastery, users, sessions,
+login_attempts, password_resets) plus per-learner indexes, and seeds the
+`demo-learner` and demo-account records. Set `NETLIFY_DATABASE_URL` (production) or
 `DATABASE_URL` (local development) to a PostgreSQL connection string first —
-without one the API exits with a clear error message.
+without one the API exits with a clear error message. Authentication needs no
+additional environment variables.
 
 ## Endpoints
 
+Learner-data endpoints require a valid session (account or explicit demo
+session, carried in the HttpOnly `sp_session` cookie) and answer 401
+otherwise — there is no anonymous fallback. Identity always comes from the
+validated session, never from client parameters. State-changing requests
+with a cross-host `Origin`/`Referer` are rejected (403).
+
 - `GET /api/health` → `{ ok: true }`
-- `GET /api/state` → `{ state: <journey snapshot> | null, learning: { submissions[], feedback[], evidence[] } }`
-- `PUT /api/state` ← `{ state: <journey snapshot> }` (validated, upsert in one transaction; 400 on invalid payload or malformed JSON)
-- `DELETE /api/state` → clears the demo journey including learning-loop rows
+- `POST /api/auth/register` ← `{ email, password }` (10+ chars; role always `learner`) → 201 `{ user }` with session cookie; 400 on invalid input, 409 on duplicate email
+- `POST /api/auth/login` ← `{ email, password }` → 200 `{ user }` with session cookie; generic 401 on bad credentials; 429 after repeated failures
+- `POST /api/auth/logout` → revokes the session, clears the cookie
+- `POST /api/auth/demo` → mints a short-lived demo session for the shared demo learner; the only way to act as demo
+- `GET /api/auth/me` → `{ authenticated, demo, user }` (`demo` marks the shared demo identity)
+- `GET /api/state` → `{ state: <journey snapshot> | null, learning: { submissions[], feedback[], evidence[] } }` for the session owner only
+- `PUT /api/state` ← `{ state: <journey snapshot> }` (validated, upsert in one transaction; 400 on invalid payload or malformed JSON) → `{ ok: true, scope }`
+- `DELETE /api/state` → clears only the session owner's journey including learning-loop rows
 - `POST /api/submissions` ← `{ stageId, kind, response, verdict, strengths, improvements, nextAction, evidence? }` → `{ submission: { id, attempt }, feedback: { verdict, strengths, improvements, nextAction, proseSource }, evidenceId }` (attempt assigned server-side; deterministic verdict stored verbatim; when Groq is configured the prose fields are AI rewordings validated server-side with `proseSource: 'ai'`, otherwise the deterministic text with `'mock'`; one transaction per write; 400 on invalid payload or missing journey)
 - `POST /api/learn` ← `{ goalText, outcome, stageTitle, stageKind, stageDescription, practiceTask, level }` → `{ source: 'ai', explanation, example }` or `{ source: 'mock' }` (validated; AI failures fall back to mock, never to learner-facing errors)
 - `POST /api/goal-parse` ← `{ goalText }` (4–500 chars) → `{ source: 'ai', parsed: { subject ≤120, desiredOutcome ≤300, timeframe enum } }` or `{ source: 'mock', parsed: null }` (extraction only — never validates, scores, or judges the goal; 400 on invalid request)
