@@ -11,6 +11,7 @@ import {
   DEMO_LEARNER_ID,
   countRecentLoginAttempts,
   findSessionByTokenHash,
+  purgeExpiredSessions,
   recordLoginAttempt,
   type StoredUser,
 } from './db.ts'
@@ -199,6 +200,17 @@ export async function loginAllowed(email: string): Promise<boolean> {
 
 export async function recordFailedLogin(email: string, ip: string): Promise<void> {
   await recordLoginAttempt({ email, ip })
+}
+
+// Best-effort cleanup of expired sessions on session creation. Failures
+// must never block legitimate authentication: stale rows are harmless
+// because lookups filter by expiry.
+export async function purgeExpiredBestEffort(): Promise<void> {
+  try {
+    await purgeExpiredSessions()
+  } catch {
+    // ignore
+  }
 }
 
 // CSRF: cookies are SameSite=Lax and state changes require JSON, so simple

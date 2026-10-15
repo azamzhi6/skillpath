@@ -51,6 +51,7 @@ import {
   passwordError,
   passwordMatches,
   publicUser,
+  purgeExpiredBestEffort,
   recordFailedLogin,
   sameOriginOk,
   setSessionCookie,
@@ -173,6 +174,7 @@ app.post('/api/auth/register', async (req, res) => {
       tokenHash: hashToken(token),
       expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
     })
+    await purgeExpiredBestEffort()
     setSessionCookie(res, req, token)
     res.status(201).json({ user: publicUser(user) })
   } catch (err) {
@@ -228,6 +230,7 @@ app.post('/api/auth/login', async (req, res) => {
     tokenHash: hashToken(token),
     expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
   })
+  await purgeExpiredBestEffort()
   setSessionCookie(res, req, token)
   res.json({ user: publicUser(creds) })
 })
@@ -259,6 +262,7 @@ app.post('/api/auth/demo', async (req, res) => {
     tokenHash: hashToken(token),
     expiresAt: new Date(Date.now() + DEMO_SESSION_TTL_MS).toISOString(),
   })
+  await purgeExpiredBestEffort()
   setSessionCookie(res, req, token, DEMO_SESSION_TTL_MS)
   res.json({ authenticated: true, demo: true, user: publicUser(demo) })
 })

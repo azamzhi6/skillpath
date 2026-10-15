@@ -405,6 +405,33 @@ const demo = makeClient()
   check('logged-out write left demo data unchanged', demoAfter.json?.state?.goalText === 'Demo journey text')
 }
 
+// ---- Expired-session cleanup on authentication ----
+{
+  const clientE = makeClient()
+  await clientE.call('POST', '/api/auth/register', {
+    email: 'e-exp@example.com',
+    password: 'correct-horse-10',
+  })
+  const clientF = makeClient()
+  await clientF.call('POST', '/api/auth/register', {
+    email: 'f-exp@example.com',
+    password: 'correct-horse-10',
+  })
+  // Age only E's session; the next authentication must purge it.
+  await pool.query(`UPDATE sessions SET expires_at = '2000-01-01T00:00:00.000Z' WHERE user_id = (SELECT id FROM users WHERE email = 'e-exp@example.com')`)
+  const staleMe = await clientE.call('GET', '/api/auth/me')
+  check('aged session reads as unauthenticated', staleMe.json?.authenticated === false)
+  const reLogin = await clientE.call('POST', '/api/auth/login', {
+    email: 'e-exp@example.com',
+    password: 'correct-horse-10',
+  })
+  check('login succeeds while cleanup runs', reLogin.status === 200)
+  const { rows } = await pool.query(`SELECT COUNT(*) AS n FROM sessions WHERE expires_at <= $1`, [new Date().toISOString()])
+  check('expired sessions removed, none remain', Number(rows[0].n) === 0)
+  const meF = await clientF.call('GET', '/api/auth/me')
+  check('valid sessions survive cleanup', meF.json?.authenticated === true)
+}
+
 {
   const login = await anon.call('POST', '/api/auth/login', {
     email: 'b@example.com',
