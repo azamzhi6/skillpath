@@ -10,6 +10,7 @@
     "dev": "vite --port 5173",
     "dev:api": "node server/index.ts",
     "test:db": "node tests/db-pg.mjs",
+    "test:auth-stores": "node tests/auth-stores-pg.mjs",
     "test:api": "node tests/api-pg.mjs",
     "test:eval": "node tests/practice-v2.mjs",
     "test:mastery": "node tests/mastery.mjs",

@@ -121,15 +121,69 @@ export async function initDb(): Promise<void> {
     .split(';')
     .map((raw) => raw.trim())
     .filter((statement) => statement !== '')
+  // Pass 1: tables only. Pass 2 (indexes) runs after runPhase1Migrations
+  // below, so indexes referencing migrated columns (e.g. mastery
+  // learner_id) are never created before the column exists — on fresh and
+  // legacy databases alike.
   for (const statement of statements) {
     const table = /CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i.exec(statement)?.[1]
-    if (table && existing.has(table)) continue
+    if (!table) continue
+    if (existing.has(table)) continue
     await pool().query(statement)
   }
   await pool().query(
     'INSERT INTO learners (id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING',
     [DEMO_LEARNER_ID, 'Demo Learner'],
   )
+  await runPhase1Migrations()
+  for (const statement of statements) {
+    const table = /CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i.exec(statement)?.[1]
+    if (table) continue
+    await pool().query(statement)
+  }
+}
+
+/**
+ * Phase 1 auth migration. Additive and rerunnable:
+ * - new tables arrive via schema.sql (CREATE TABLE IF NOT EXISTS)
+ * - mastery.learner_id is added only when missing, then backfilled to the
+ *   demo learner so pre-existing rows are preserved
+ * - the legacy global UNIQUE on (template, stage_id, criterion_id) is
+ *   dropped so different learners can share criteria; per-learner
+ *   uniqueness comes from idx_mastery_learner_unique (schema.sql)
+ * - single-goal-per-learner comes from idx_goals_learner_unique (schema.sql)
+ * Safe on fresh DBs (ALTER/DROP miss gracefully), existing DBs, repeated
+ * startups, and concurrent serverless cold starts (duplicate-column races
+ * are ignored; all other errors propagate).
+ */
+async function runPhase1Migrations(): Promise<void> {
+  const db = pool()
+  try {
+    await db.query('ALTER TABLE learner_criterion_mastery ADD COLUMN learner_id TEXT')
+  } catch (err) {
+    if (!isAlreadyExistsError(err)) throw err
+  }
+  await db.query(
+    'UPDATE learner_criterion_mastery SET learner_id = $1 WHERE learner_id IS NULL',
+    [DEMO_LEARNER_ID],
+  )
+  // PostgreSQL names an inline UNIQUE deterministically as
+  // {table}_{columns}_key. IF EXISTS keeps this a safe no-op on fresh
+  // databases, on reruns, and on engines that never created it under this
+  // name (pg-mem uses internal hash names — see the test limitation note).
+  await db.query('ALTER TABLE learner_criterion_mastery DROP CONSTRAINT IF EXISTS learner_criterion_mastery_template_stage_id_criterion_id_key')
+}
+
+function isAlreadyExistsError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null) {
+    const code = (err as { code?: unknown }).code
+    if (code === '42701' || code === '42710') return true
+    const message = (err as { message?: unknown }).message
+    if (typeof message === 'string' && /already exists|duplicate/i.test(message)) {
+      return true
+    }
+  }
+  return false
 }
 
 export interface StoredSnapshot {
@@ -296,7 +350,13 @@ export async function loadSnapshot(): Promise<StoredSnapshot | null> {
 
 export async function clearAll(): Promise<void> {
   await withTransaction(async (db) => {
-    await db.query('DELETE FROM learner_criterion_mastery', [])
+    // Demo reset only: every other statement here is already scoped to the
+    // demo goal tree. Registered learners carry their own learner_id values
+    // (backfill + all writers guarantee attribution), so strict equality
+    // cannot touch them.
+    await db.query('DELETE FROM learner_criterion_mastery WHERE learner_id = $1', [
+      DEMO_LEARNER_ID,
+    ])
     await db.query('DELETE FROM capability_evidence WHERE goal_id = $1', ['goal-demo'])
     await db.query(
       'DELETE FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = $1)',
@@ -356,6 +416,7 @@ export interface LearningBlock {
 
 interface MasteryRowShape {
   id: string
+  learner_id: string | null
   template: string
   stage_id: string
   criterion_id: string
@@ -419,41 +480,10 @@ async function upsertMasteryRow(
   outcome: CriterionOutcome,
   now: string,
 ): Promise<void> {
-  const existing = (
-    await db.query<MasteryRowShape>(
-      'SELECT * FROM learner_criterion_mastery WHERE template = $1 AND stage_id = $2 AND criterion_id = $3',
-      [template, stageId, outcome.criterionId],
-    )
-  ).rows[0]
-  const next = existing
-    ? nextMasteryRow(rowToMastery(existing), outcome.met, now)
-    : initialMasteryRow(template, stageId, outcome.criterionId, outcome.met, now)
-  await db.query(
-    `INSERT INTO learner_criterion_mastery (id, template, stage_id, criterion_id, attempts, passes, failures, consecutive_failures, last_result, first_seen_at, last_assessed_at, mastery_status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-     ON CONFLICT(template, stage_id, criterion_id) DO UPDATE SET
-       attempts = excluded.attempts,
-       passes = excluded.passes,
-       failures = excluded.failures,
-       consecutive_failures = excluded.consecutive_failures,
-       last_result = excluded.last_result,
-       last_assessed_at = excluded.last_assessed_at,
-       mastery_status = excluded.mastery_status`,
-    [
-      existing ? existing.id : randomUUID(),
-      next.template,
-      next.stageId,
-      next.criterionId,
-      next.attempts,
-      next.passes,
-      next.failures,
-      next.consecutiveFailures,
-      next.lastResult,
-      next.firstSeenAt,
-      next.lastAssessedAt,
-      next.masteryStatus,
-    ],
-  )
+  // Demo journey rows are attributed to the demo learner so the per-learner
+  // uniqueness index applies uniformly. Transitions are identical (same
+  // initial/nextMasteryRow math as before).
+  await upsertMasteryRowForLearner(db, DEMO_LEARNER_ID, template, stageId, outcome, now)
 }
 
 export async function loadMastery(): Promise<MasteryRow[]> {
@@ -558,6 +588,633 @@ export async function loadStageInfo(stageId: string): Promise<StageInfo | null> 
     await pool().query<{ stagesJson: string }>(
       'SELECT stages_json AS "stagesJson" FROM paths WHERE goal_id = $1',
       ['goal-demo'],
+    )
+  ).rows
+  const row = rows[0]
+  if (!row) return null
+  try {
+    const stages = JSON.parse(row.stagesJson) as {
+      id?: unknown
+      title?: unknown
+      kind?: unknown
+      practice?: unknown
+      criteria?: unknown
+    }[]
+    if (!Array.isArray(stages)) return null
+    const match = stages.find((s) => s.id === stageId)
+    if (!match || typeof match.title !== 'string') return null
+    const criterionIds = Array.isArray(match.criteria)
+      ? match.criteria
+          .filter(
+            (c): c is { id: unknown } =>
+              typeof c === 'object' && c !== null,
+          )
+          .map((c) => c.id)
+          .filter((id): id is string => typeof id === 'string')
+      : []
+    return {
+      title: match.title,
+      kind: typeof match.kind === 'string' ? match.kind : '',
+      practice: typeof match.practice === 'string' ? match.practice : '',
+      criterionIds,
+    }
+  } catch {
+    return null
+  }
+}
+
+// ---- Phase 1 (Auth) Task 1: per-learner ownership stores ----
+// Schema + data helpers only. No routes, no frontend changes, no password or
+// session-token crypto here: callers pass already-hashed values (hashing lands
+// with the auth-route task). Every helper takes an explicit learnerId/userId
+// and never falls back to the shared demo goal, so one learner's rows are
+// invisible to another. Existing demo functions above are untouched.
+
+export type UserRole = 'learner' | 'admin'
+
+export interface StoredUser {
+  id: string
+  email: string
+  role: UserRole
+  learnerId: string
+  createdAt: string
+}
+
+export interface StoredUserCredentials extends StoredUser {
+  // Server-only. Never serialize to the frontend.
+  passwordHash: string
+}
+
+export interface StoredSession {
+  id: string
+  userId: string
+  createdAt: string
+  expiresAt: string
+  lastSeenAt: string
+}
+
+export interface AuthenticatedSession {
+  session: StoredSession
+  user: StoredUser
+}
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+function isUniqueViolationError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null) {
+    const code = (err as { code?: unknown }).code
+    if (code === '23505') return true
+    const message = (err as { message?: unknown }).message
+    if (
+      typeof message === 'string' &&
+      /duplicate|already exists|unique/i.test(message)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/** Insert a learners row if missing. Used when provisioning accounts. */
+export async function ensureLearner(
+  learnerId: string,
+  displayName: string,
+): Promise<void> {
+  await pool().query(
+    'INSERT INTO learners (id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [learnerId, displayName],
+  )
+}
+
+async function emailTaken(email: string): Promise<boolean> {
+  const rows = (
+    await pool().query<{ ok: number }>('SELECT 1 AS ok FROM users WHERE email = $1', [
+      email,
+    ])
+  ).rows
+  return rows.length > 0
+}
+
+export async function createUser(input: {
+  email: string
+  passwordHash: string
+  displayName?: string
+  role?: UserRole
+}): Promise<StoredUser> {
+  const email = normalizeEmail(input.email)
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Invalid email')
+  if (typeof input.passwordHash !== 'string' || input.passwordHash.length < 10) {
+    throw new Error('Invalid password hash')
+  }
+  // Role is server-controlled: the later public-registration route always
+  // passes 'learner' or omits role. No client input may reach this parameter.
+  const role: UserRole = input.role ?? 'learner'
+  if (role !== 'learner' && role !== 'admin') throw new Error('Invalid role')
+  const now = new Date().toISOString()
+  const learnerId = `learner-${randomUUID()}`
+  const id = randomUUID()
+  try {
+    await withTransaction(async (db) => {
+      await db.query(
+        'INSERT INTO learners (id, display_name) VALUES ($1, $2)',
+        [
+          learnerId,
+          input.displayName && input.displayName.trim() !== ''
+            ? input.displayName.trim()
+            : email,
+        ],
+      )
+      await db.query(
+        'INSERT INTO users (id, email, password_hash, role, learner_id, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+        [id, email, input.passwordHash, role, learnerId, now],
+      )
+    })
+  } catch (err) {
+    // Report an email conflict only when the address is actually taken:
+    // unrelated uniqueness failures must surface unchanged.
+    if (isUniqueViolationError(err) && (await emailTaken(email))) {
+      throw new Error('Email already registered')
+    }
+    throw err
+  }
+  return { id, email, role, learnerId, createdAt: now }
+}
+
+interface UserRow {
+  id: string
+  email: string
+  role: string
+  learnerId: string
+  createdAt: string
+}
+
+function toStoredUser(row: UserRow): StoredUser {
+  return {
+    id: row.id,
+    email: row.email,
+    role: row.role as UserRole,
+    learnerId: row.learnerId,
+    createdAt: row.createdAt,
+  }
+}
+
+export async function findUserByEmail(email: string): Promise<StoredUser | null> {
+  const row = (
+    await pool().query<UserRow>(
+      'SELECT id, email, role, learner_id AS "learnerId", created_at AS "createdAt" FROM users WHERE email = $1',
+      [normalizeEmail(email)],
+    )
+  ).rows[0]
+  if (!row) return null
+  return toStoredUser(row)
+}
+
+export async function findUserCredentialsByEmail(
+  email: string,
+): Promise<StoredUserCredentials | null> {
+  const row = (
+    await pool().query<UserRow & { passwordHash: string }>(
+      'SELECT id, email, role, learner_id AS "learnerId", password_hash AS "passwordHash", created_at AS "createdAt" FROM users WHERE email = $1',
+      [normalizeEmail(email)],
+    )
+  ).rows[0]
+  if (!row) return null
+  return { ...toStoredUser(row), passwordHash: row.passwordHash }
+}
+
+export async function createSession(input: {
+  userId: string
+  tokenHash: string
+  expiresAt: string
+}): Promise<StoredSession> {
+  if (!input.userId || !input.tokenHash || !input.expiresAt) {
+    throw new Error('Invalid session')
+  }
+  const now = new Date().toISOString()
+  const id = randomUUID()
+  await pool().query(
+    'INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    [id, input.userId, input.tokenHash, now, input.expiresAt, now],
+  )
+  return { id, userId: input.userId, createdAt: now, expiresAt: input.expiresAt, lastSeenAt: now }
+}
+
+interface SessionJoinRow {
+  sessionId: string
+  userId: string
+  sessionCreatedAt: string
+  sessionExpiresAt: string
+  sessionLastSeenAt: string
+  uId: string
+  uEmail: string
+  uRole: string
+  uLearnerId: string
+  uCreatedAt: string
+}
+
+export async function findSessionByTokenHash(
+  tokenHash: string,
+): Promise<AuthenticatedSession | null> {
+  const now = new Date().toISOString()
+  const row = (
+    await pool().query<SessionJoinRow>(
+      `SELECT s.id AS "sessionId", s.user_id AS "userId", s.created_at AS "sessionCreatedAt", s.expires_at AS "sessionExpiresAt", s.last_seen_at AS "sessionLastSeenAt",
+              u.id AS "uId", u.email AS "uEmail", u.role AS "uRole", u.learner_id AS "uLearnerId", u.created_at AS "uCreatedAt"
+       FROM sessions s JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = $1 AND s.expires_at > $2`,
+      [tokenHash, now],
+    )
+  ).rows[0]
+  if (!row) return null
+  return {
+    session: {
+      id: row.sessionId,
+      userId: row.userId,
+      createdAt: row.sessionCreatedAt,
+      expiresAt: row.sessionExpiresAt,
+      lastSeenAt: row.sessionLastSeenAt,
+    },
+    user: {
+      id: row.uId,
+      email: row.uEmail,
+      role: row.uRole as UserRole,
+      learnerId: row.uLearnerId,
+      createdAt: row.uCreatedAt,
+    },
+  }
+}
+
+export async function refreshSessionLastSeen(id: string): Promise<void> {
+  await pool().query('UPDATE sessions SET last_seen_at = $1 WHERE id = $2', [
+    new Date().toISOString(),
+    id,
+  ])
+}
+
+export async function deleteSessionByTokenHash(tokenHash: string): Promise<void> {
+  await pool().query('DELETE FROM sessions WHERE token_hash = $1', [tokenHash])
+}
+
+export async function deleteSessionsForUser(userId: string): Promise<void> {
+  await pool().query('DELETE FROM sessions WHERE user_id = $1', [userId])
+}
+
+export async function purgeExpiredSessions(): Promise<void> {
+  await pool().query('DELETE FROM sessions WHERE expires_at <= $1', [
+    new Date().toISOString(),
+  ])
+}
+
+export async function recordLoginAttempt(input: {
+  email: string
+  ip: string
+}): Promise<void> {
+  const email = normalizeEmail(input.email)
+  const ip = input.ip.trim() === '' ? 'unknown' : input.ip.trim().slice(0, 200)
+  await pool().query(
+    'INSERT INTO login_attempts (id, email, ip, attempted_at) VALUES ($1, $2, $3, $4)',
+    [randomUUID(), email, ip, new Date().toISOString()],
+  )
+}
+
+export async function countRecentLoginAttempts(input: {
+  email: string
+  sinceIso: string
+}): Promise<number> {
+  const row = (
+    await pool().query<{ n: string }>(
+      'SELECT COUNT(*) AS n FROM login_attempts WHERE email = $1 AND attempted_at > $2',
+      [normalizeEmail(input.email), input.sinceIso],
+    )
+  ).rows[0]
+  return Number(row?.n ?? 0)
+}
+
+async function findGoalIdForLearner(
+  db: Pick<DbPoolLike, 'query'>,
+  learnerId: string,
+): Promise<string | null> {
+  const rows = (
+    await db.query<{ id: string }>(
+      'SELECT id FROM goals WHERE learner_id = $1 ORDER BY updated_at DESC',
+      [learnerId],
+    )
+  ).rows
+  return rows.length > 0 ? rows[0].id : null
+}
+
+export async function saveSnapshotForLearner(
+  learnerId: string,
+  snapshot: StoredSnapshot,
+): Promise<void> {
+  const s = snapshot
+  const now = new Date().toISOString()
+  await withTransaction(async (db) => {
+    // Single-statement upsert on the per-learner unique index: concurrent
+    // first saves converge on one goal row instead of forking. On conflict
+    // the whole snapshot is replaced (last writer wins) — never torn and
+    // never silently discarded. The generated id is used only on insert.
+    const candidateId = `goal-${randomUUID()}`
+    await db.query(
+      `INSERT INTO goals (id, learner_id, raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+       ON CONFLICT(learner_id) DO UPDATE SET
+         raw_text = excluded.raw_text,
+         template = excluded.template,
+         experience = excluded.experience,
+         hours_per_week = excluded.hours_per_week,
+         subject = excluded.subject,
+         desired_outcome = excluded.desired_outcome,
+         timeframe = excluded.timeframe,
+         updated_at = excluded.updated_at`,
+      [
+        candidateId,
+        learnerId,
+        s.goalText,
+        s.template,
+        s.experience,
+        s.hoursPerWeek,
+        s.parsedGoal ? s.parsedGoal.subject : null,
+        s.parsedGoal ? s.parsedGoal.desiredOutcome : null,
+        s.parsedGoal ? s.parsedGoal.timeframe : null,
+        now,
+      ],
+    )
+    const goalId = await findGoalIdForLearner(db, learnerId)
+    if (goalId === null) throw new Error('Could not resolve learner goal')
+    await db.query(
+      `INSERT INTO diagnostics (goal_id, answers_json, score, level)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT(goal_id) DO UPDATE SET
+         answers_json = excluded.answers_json,
+         score = excluded.score,
+         level = excluded.level`,
+      [goalId, JSON.stringify(s.answers), s.score, s.level],
+    )
+    await db.query(
+      `INSERT INTO paths (goal_id, title, outcome, level, stages_json)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT(goal_id) DO UPDATE SET
+         title = excluded.title,
+         outcome = excluded.outcome,
+         level = excluded.level,
+         stages_json = excluded.stages_json`,
+      [goalId, s.pathTitle, s.pathOutcome, s.pathLevel, JSON.stringify(s.stages)],
+    )
+    await db.query(
+      `INSERT INTO progress (goal_id, completed_stage_ids_json, updated_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT(goal_id) DO UPDATE SET
+         completed_stage_ids_json = excluded.completed_stage_ids_json,
+         updated_at = excluded.updated_at`,
+      [goalId, JSON.stringify(s.completedStageIds), now],
+    )
+  })
+}
+
+export async function loadSnapshotForLearner(
+  learnerId: string,
+): Promise<StoredSnapshot | null> {
+  const db = pool()
+  const goalId = await findGoalIdForLearner(db, learnerId)
+  if (goalId === null) return null
+  const goal = (
+    await db.query<GoalRow>(
+      'SELECT raw_text, template, experience, hours_per_week, subject, desired_outcome, timeframe FROM goals WHERE id = $1',
+      [goalId],
+    )
+  ).rows[0]
+  if (!goal) return null
+  const diagnostic = (
+    await db.query<DiagnosticRow>(
+      'SELECT answers_json, score, level FROM diagnostics WHERE goal_id = $1',
+      [goalId],
+    )
+  ).rows[0]
+  const path = (
+    await db.query<PathRow>(
+      'SELECT title, outcome, level, stages_json FROM paths WHERE goal_id = $1',
+      [goalId],
+    )
+  ).rows[0]
+  const progress = (
+    await db.query<ProgressRow>(
+      'SELECT completed_stage_ids_json FROM progress WHERE goal_id = $1',
+      [goalId],
+    )
+  ).rows[0]
+  return {
+    goalText: goal.raw_text,
+    template: goal.template,
+    experience: goal.experience,
+    hoursPerWeek: goal.hours_per_week,
+    parsedGoal:
+      goal.subject !== null ||
+      goal.desired_outcome !== null ||
+      goal.timeframe !== null
+        ? {
+            subject: goal.subject ?? '',
+            desiredOutcome: goal.desired_outcome ?? '',
+            timeframe: goal.timeframe ?? '',
+          }
+        : null,
+    answers: diagnostic ? (JSON.parse(diagnostic.answers_json) as StoredSnapshot['answers']) : [],
+    score: diagnostic ? diagnostic.score : 0,
+    level: diagnostic ? diagnostic.level : '',
+    pathTitle: path ? path.title : '',
+    pathOutcome: path ? path.outcome : '',
+    pathLevel: path ? path.level : '',
+    stages: path ? (JSON.parse(path.stages_json) as unknown[]) : [],
+    completedStageIds: progress
+      ? (JSON.parse(progress.completed_stage_ids_json) as string[])
+      : [],
+  }
+}
+
+export async function journeyExistsForLearner(learnerId: string): Promise<boolean> {
+  const rows = (
+    await pool().query<{ ok: number }>(
+      'SELECT 1 AS ok FROM goals WHERE learner_id = $1',
+      [learnerId],
+    )
+  ).rows
+  return rows.length > 0
+}
+
+export async function clearAllForLearner(learnerId: string): Promise<void> {
+  await withTransaction(async (db) => {
+    const goalIds = (
+      await db.query<{ id: string }>('SELECT id FROM goals WHERE learner_id = $1', [
+        learnerId,
+      ])
+    ).rows.map((row) => row.id)
+    for (const goalId of goalIds) {
+      await db.query('DELETE FROM capability_evidence WHERE goal_id = $1', [goalId])
+      await db.query(
+        'DELETE FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = $1)',
+        [goalId],
+      )
+      await db.query('DELETE FROM submissions WHERE goal_id = $1', [goalId])
+      await db.query('DELETE FROM progress WHERE goal_id = $1', [goalId])
+      await db.query('DELETE FROM paths WHERE goal_id = $1', [goalId])
+      await db.query('DELETE FROM diagnostics WHERE goal_id = $1', [goalId])
+      await db.query('DELETE FROM goals WHERE id = $1', [goalId])
+    }
+    await db.query('DELETE FROM learner_criterion_mastery WHERE learner_id = $1', [
+      learnerId,
+    ])
+  })
+}
+
+export async function saveSubmissionForLearner(
+  learnerId: string,
+  s: NewSubmission,
+  outcomes: CriterionOutcome[],
+  template: string,
+): Promise<{ id: string; attempt: number }> {
+  const now = new Date().toISOString()
+  return withTransaction(async (db) => {
+    const goalId = await findGoalIdForLearner(db, learnerId)
+    if (goalId === null) throw new Error('No active learning journey')
+    const count = (
+      await db.query<{ n: string }>(
+        'SELECT COUNT(*) AS n FROM submissions WHERE goal_id = $1 AND stage_id = $2 AND kind = $3',
+        [goalId, s.stageId, s.kind],
+      )
+    ).rows[0]
+    const id = randomUUID()
+    const attempt = Number(count?.n ?? 0) + 1
+    await db.query(
+      `INSERT INTO submissions (id, goal_id, stage_id, kind, response, attempt, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, goalId, s.stageId, s.kind, s.response, attempt, now],
+    )
+    for (const outcome of outcomes) {
+      await upsertMasteryRowForLearner(db, learnerId, template, s.stageId, outcome, now)
+    }
+    return { id, attempt }
+  })
+}
+
+async function upsertMasteryRowForLearner(
+  db: DbClient,
+  learnerId: string,
+  template: string,
+  stageId: string,
+  outcome: CriterionOutcome,
+  now: string,
+): Promise<void> {
+  // Manual upsert (no ON CONFLICT): lookup/update/insert is scoped to this learner.
+  const existing = (
+    await db.query<MasteryRowShape>(
+      'SELECT * FROM learner_criterion_mastery WHERE learner_id = $1 AND template = $2 AND stage_id = $3 AND criterion_id = $4',
+      [learnerId, template, stageId, outcome.criterionId],
+    )
+  ).rows[0]
+  const next = existing
+    ? nextMasteryRow(rowToMastery(existing), outcome.met, now)
+    : initialMasteryRow(template, stageId, outcome.criterionId, outcome.met, now)
+  if (existing) {
+    await db.query(
+      `UPDATE learner_criterion_mastery SET attempts = $1, passes = $2, failures = $3,
+        consecutive_failures = $4, last_result = $5, last_assessed_at = $6, mastery_status = $7 WHERE id = $8`,
+      [
+        next.attempts,
+        next.passes,
+        next.failures,
+        next.consecutiveFailures,
+        next.lastResult,
+        next.lastAssessedAt,
+        next.masteryStatus,
+        existing.id,
+      ],
+    )
+  } else {
+    await db.query(
+      `INSERT INTO learner_criterion_mastery (id, learner_id, template, stage_id, criterion_id, attempts, passes, failures, consecutive_failures, last_result, first_seen_at, last_assessed_at, mastery_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [
+        randomUUID(),
+        learnerId,
+        next.template,
+        next.stageId,
+        next.criterionId,
+        next.attempts,
+        next.passes,
+        next.failures,
+        next.consecutiveFailures,
+        next.lastResult,
+        next.firstSeenAt,
+        next.lastAssessedAt,
+        next.masteryStatus,
+      ],
+    )
+  }
+}
+
+export async function loadMasteryForLearner(learnerId: string): Promise<MasteryRow[]> {
+  const rows = (
+    await pool().query<MasteryRowShape>(
+      'SELECT * FROM learner_criterion_mastery WHERE learner_id = $1 ORDER BY template, stage_id, criterion_id',
+      [learnerId],
+    )
+  ).rows
+  return rows.map(rowToMastery)
+}
+
+export async function loadLearningForLearner(learnerId: string): Promise<LearningBlock> {
+  const db = pool()
+  const goalId = await findGoalIdForLearner(db, learnerId)
+  if (goalId === null) {
+    return { submissions: [], feedback: [], evidence: [], mastery: await loadMasteryForLearner(learnerId) }
+  }
+  const submissions = (
+    await db.query<StoredSubmission>(
+      'SELECT id, stage_id AS "stageId", kind, response, attempt, created_at AS "createdAt" FROM submissions WHERE goal_id = $1 ORDER BY created_at, id',
+      [goalId],
+    )
+  ).rows
+  const feedback = (
+    await db.query<StoredFeedback>(
+      'SELECT submission_id AS "submissionId", verdict, strengths, improvements, next_action AS "nextAction", prose_source AS "proseSource" FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = $1)',
+      [goalId],
+    )
+  ).rows
+  const evidence = (
+    await db.query<StoredEvidence>(
+      'SELECT id, submission_id AS "submissionId", capability, result, evidence, demonstrated_at AS "demonstratedAt" FROM capability_evidence WHERE goal_id = $1 ORDER BY demonstrated_at DESC, id DESC',
+      [goalId],
+    )
+  ).rows
+  return { submissions, feedback, evidence, mastery: await loadMasteryForLearner(learnerId) }
+}
+
+export async function loadGoalTextForLearner(learnerId: string): Promise<string> {
+  const db = pool()
+  const goalId = await findGoalIdForLearner(db, learnerId)
+  if (goalId === null) return ''
+  const rows = (
+    await db.query<{ rawText: string }>(
+      'SELECT raw_text AS "rawText" FROM goals WHERE id = $1',
+      [goalId],
+    )
+  ).rows
+  return rows.length > 0 ? rows[0].rawText : ''
+}
+
+export async function loadStageInfoForLearner(
+  learnerId: string,
+  stageId: string,
+): Promise<StageInfo | null> {
+  const db = pool()
+  const goalId = await findGoalIdForLearner(db, learnerId)
+  if (goalId === null) return null
+  const rows = (
+    await db.query<{ stagesJson: string }>(
+      'SELECT stages_json AS "stagesJson" FROM paths WHERE goal_id = $1',
+      [goalId],
     )
   ).rows
   const row = rows[0]
