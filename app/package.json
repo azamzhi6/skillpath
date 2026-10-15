@@ -10,6 +10,8 @@
     "dev": "vite --port 5173",
     "dev:api": "node server/index.ts",
     "test:db": "node tests/db-pg.mjs",
+    "test:auth": "node tests/auth-api-pg.mjs",
+    "test:storage-keys": "node tests/storage-keys.mjs",
     "test:auth-stores": "node tests/auth-stores-pg.mjs",
     "test:api": "node tests/api-pg.mjs",
     "test:eval": "node tests/practice-v2.mjs",
@@ -21,6 +23,7 @@
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "pg": "^8.23.1",
     "react": "^19.1.0",
@@ -29,6 +32,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",
+    "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.3",
     "@types/pg": "^8.23.1",

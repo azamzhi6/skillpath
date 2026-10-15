@@ -15,6 +15,8 @@ import {
 } from './mastery.ts'
 
 export const DEMO_LEARNER_ID = 'demo-learner'
+export const DEMO_USER_ID = 'user-demo'
+export const DEMO_USER_EMAIL = 'demo@skillpath.local'
 
 interface DbClient {
   query: <T extends Record<string, any> = Record<string, any>>(
@@ -172,6 +174,15 @@ async function runPhase1Migrations(): Promise<void> {
   // databases, on reruns, and on engines that never created it under this
   // name (pg-mem uses internal hash names — see the test limitation note).
   await db.query('ALTER TABLE learner_criterion_mastery DROP CONSTRAINT IF EXISTS learner_criterion_mastery_template_stage_id_criterion_id_key')
+  // Demo identity for server-issued demo sessions: bound to the demo
+  // learner with a password hash that can never verify ('UNUSABLE' is not
+  // a valid bcrypt hash, and the login route rejects this address outright).
+  await db.query(
+    `INSERT INTO users (id, email, password_hash, role, learner_id, created_at)
+     VALUES ($1, $2, 'UNUSABLE', 'learner', $3, $4)
+     ON CONFLICT DO NOTHING`,
+    [DEMO_USER_ID, DEMO_USER_EMAIL, DEMO_LEARNER_ID, new Date().toISOString()],
+  )
 }
 
 function isAlreadyExistsError(err: unknown): boolean {
@@ -349,25 +360,10 @@ export async function loadSnapshot(): Promise<StoredSnapshot | null> {
 }
 
 export async function clearAll(): Promise<void> {
-  await withTransaction(async (db) => {
-    // Demo reset only: every other statement here is already scoped to the
-    // demo goal tree. Registered learners carry their own learner_id values
-    // (backfill + all writers guarantee attribution), so strict equality
-    // cannot touch them.
-    await db.query('DELETE FROM learner_criterion_mastery WHERE learner_id = $1', [
-      DEMO_LEARNER_ID,
-    ])
-    await db.query('DELETE FROM capability_evidence WHERE goal_id = $1', ['goal-demo'])
-    await db.query(
-      'DELETE FROM feedback WHERE submission_id IN (SELECT id FROM submissions WHERE goal_id = $1)',
-      ['goal-demo'],
-    )
-    await db.query('DELETE FROM submissions WHERE goal_id = $1', ['goal-demo'])
-    await db.query('DELETE FROM progress WHERE goal_id = $1', ['goal-demo'])
-    await db.query('DELETE FROM paths WHERE goal_id = $1', ['goal-demo'])
-    await db.query('DELETE FROM diagnostics WHERE goal_id = $1', ['goal-demo'])
-    await db.query('DELETE FROM goals WHERE id = $1', ['goal-demo'])
-  })
+  // Demo reset only: the demo journey now lives under a generated goal id,
+  // so delegate to the learner-scoped reset. Registered learners carry
+  // different learner_ids and are never touched.
+  await clearAllForLearner(DEMO_LEARNER_ID)
 }
 
 export interface NewSubmission {
@@ -530,6 +526,34 @@ export async function saveEvidence(
     `INSERT INTO capability_evidence (id, goal_id, submission_id, capability, result, evidence, demonstrated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [id, 'goal-demo', submissionId, capability, result, evidence, new Date().toISOString()],
+  )
+  return id
+}
+
+export async function saveEvidenceForLearner(
+  learnerId: string,
+  submissionId: string,
+  capability: string,
+  result: string,
+  evidence: string,
+): Promise<string> {
+  const db = pool()
+  const goalId = await findGoalIdForLearner(db, learnerId)
+  if (goalId === null) throw new Error('No active learning journey')
+  const owner = (
+    await db.query<{ goalId: string }>(
+      'SELECT goal_id AS "goalId" FROM submissions WHERE id = $1',
+      [submissionId],
+    )
+  ).rows[0]
+  if (!owner || owner.goalId !== goalId) {
+    throw new Error('Submission does not belong to learner')
+  }
+  const id = randomUUID()
+  await db.query(
+    `INSERT INTO capability_evidence (id, goal_id, submission_id, capability, result, evidence, demonstrated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, goalId, submissionId, capability, result, evidence, new Date().toISOString()],
   )
   return id
 }

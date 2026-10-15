@@ -19,11 +19,33 @@ function check(name, cond) {
   if (!cond) failures++
 }
 
+// Explicit demo mode for the whole suite: every call below carries the
+// server-issued demo session (assertions are unchanged).
+const jar = {}
+
+function storeCookies(res) {
+  const headers = res.headers ?? {}
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === 'set-cookie') {
+      const list = Array.isArray(value) ? value : [value]
+      for (const cookie of list) {
+        const match = /^([^=]+)=([^;]*)/.exec(cookie)
+        if (match) jar[match[1]] = match[2]
+      }
+    }
+  }
+}
+
 function event(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' }
+  const cookie = Object.entries(jar)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('; ')
+  if (cookie) headers.Cookie = cookie
   return {
     httpMethod: method,
     path,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     queryStringParameters: null,
     multiValueQueryStringParameters: null,
     body: body === undefined ? null : JSON.stringify(body),
@@ -33,6 +55,7 @@ function event(method, path, body) {
 
 async function call(method, path, body) {
   const res = await handler(event(method, path, body))
+  storeCookies(res)
   let json = null
   try {
     json = JSON.parse(res.body)
@@ -41,6 +64,8 @@ async function call(method, path, body) {
   }
   return { status: res.statusCode, json }
 }
+
+await call('POST', '/api/auth/demo')
 
 const SNAPSHOT = {
   goalText: 'I want to learn Excel for financial analysis',

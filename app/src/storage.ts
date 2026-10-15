@@ -24,48 +24,56 @@ function readParsedGoal(value: unknown): ParsedGoal | null {
   return isParsedGoal(value) ? value : null
 }
 
-export interface StorageAdapter {
-  load(): LearnerState | null
-  save(state: LearnerState): void
-  clear(): void
+// Per-identity browser cache. The legacy key stays the demo store, so
+// existing demo caches keep working; signed-in learners get isolated keys.
+// Switching accounts therefore cannot expose one learner's cached journey
+// to another on a shared device.
+export type StoreIdentity = { kind: 'demo' } | { kind: 'user'; id: string }
+
+function journeyKey(identity: StoreIdentity): string {
+  return journeyCacheKey(identity)
 }
 
-export const localStorageAdapter: StorageAdapter = {
-  load() {
-    try {
-      const raw = window.localStorage.getItem(KEY)
-      if (!raw) return null
-      const parsed = JSON.parse(raw) as LearnerState
-      if (typeof parsed.goalText !== 'string') return null
-      return {
-        goalText: parsed.goalText,
-        clarification: parsed.clarification ?? null,
-        answers: Array.isArray(parsed.answers) ? parsed.answers : [],
-        completedStageIds: Array.isArray(parsed.completedStageIds)
-          ? parsed.completedStageIds
-          : [],
-        parsedGoal: readParsedGoal(
-          (parsed as { parsedGoal?: unknown }).parsedGoal,
-        ),
-      }
-    } catch {
-      return null
+export function journeyCacheKey(identity: StoreIdentity): string {
+  return identity.kind === 'demo' ? KEY : `${KEY}.u.${identity.id}`
+}
+
+export function loadJourneyCache(identity: StoreIdentity): LearnerState | null {
+  try {
+    const raw = window.localStorage.getItem(journeyKey(identity))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as LearnerState
+    if (typeof parsed.goalText !== 'string') return null
+    return {
+      goalText: parsed.goalText,
+      clarification: parsed.clarification ?? null,
+      answers: Array.isArray(parsed.answers) ? parsed.answers : [],
+      completedStageIds: Array.isArray(parsed.completedStageIds)
+        ? parsed.completedStageIds
+        : [],
+      parsedGoal: readParsedGoal(
+        (parsed as { parsedGoal?: unknown }).parsedGoal,
+      ),
     }
-  },
-  save(state: LearnerState) {
-    try {
-      window.localStorage.setItem(KEY, JSON.stringify(state))
-    } catch {
-      // Prototype: ignore quota errors rather than breaking the flow.
-    }
-  },
-  clear() {
-    try {
-      window.localStorage.removeItem(KEY)
-    } catch {
-      // ignore
-    }
-  },
+  } catch {
+    return null
+  }
+}
+
+export function saveJourneyCache(identity: StoreIdentity, state: LearnerState): void {
+  try {
+    window.localStorage.setItem(journeyKey(identity), JSON.stringify(state))
+  } catch {
+    // Prototype: ignore quota errors rather than breaking the flow.
+  }
+}
+
+export function clearJourneyCache(identity: StoreIdentity): void {
+  try {
+    window.localStorage.removeItem(journeyKey(identity))
+  } catch {
+    // ignore
+  }
 }
 
 // ---- Thin-API persistence (Phase 3) ----
@@ -99,18 +107,33 @@ async function requestJson(
 ): Promise<unknown> {
   let res: Response
   try {
-    res = await fetch(path, { ...init, signal: AbortSignal.timeout(5000) })
+    res = await fetch(path, {
+      credentials: 'same-origin',
+      ...init,
+      signal: AbortSignal.timeout(5000),
+    })
   } catch {
     throw new Error(`API unreachable for ${path}`)
   }
-  if (!res.ok) throw new ApiHttpError(res.status, path)
+  if (!res.ok) throw await apiError(res, path)
   return (await res.json()) as unknown
+}
+
+async function apiError(res: Response, path: string): Promise<ApiHttpError> {
+  let message: string | undefined
+  try {
+    const data = (await res.json()) as { error?: unknown }
+    if (typeof data.error === 'string' && data.error !== '') message = data.error
+  } catch {
+    // Non-JSON error body: fall back to the status-based message.
+  }
+  return new ApiHttpError(res.status, path, message)
 }
 
 export class ApiHttpError extends Error {
   status: number
-  constructor(status: number, path: string) {
-    super(`API ${status} for ${path}`)
+  constructor(status: number, path: string, message?: string) {
+    super(message ?? `API ${status} for ${path}`)
     this.status = status
   }
 }
@@ -185,12 +208,13 @@ function isAnswer(value: unknown): value is DiagnosticAnswer {
 
 export async function pushRemoteState(
   snapshot: ApiJourneySnapshot,
-): Promise<void> {
-  await requestJson('/api/state', {
+): Promise<'demo' | 'authenticated'> {
+  const data = (await requestJson('/api/state', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ state: snapshot }),
-  })
+  })) as { scope?: unknown }
+  return data.scope === 'authenticated' ? 'authenticated' : 'demo'
 }
 
 export async function clearRemoteState(): Promise<void> {
@@ -260,9 +284,17 @@ export interface ActivityUi {
   drafts: Record<string, string>
 }
 
-export function loadActivityUi(): ActivityUi {
+function activityKey(identity: StoreIdentity): string {
+  return activityCacheKey(identity)
+}
+
+export function activityCacheKey(identity: StoreIdentity): string {
+  return identity.kind === 'demo' ? ACTIVITY_KEY : `${ACTIVITY_KEY}.u.${identity.id}`
+}
+
+export function loadActivityUi(identity: StoreIdentity): ActivityUi {
   try {
-    const raw = window.localStorage.getItem(ACTIVITY_KEY)
+    const raw = window.localStorage.getItem(activityKey(identity))
     if (!raw) return { stageId: null, drafts: {} }
     const parsed = JSON.parse(raw) as Partial<ActivityUi>
     const drafts: Record<string, string> = {}
@@ -280,17 +312,17 @@ export function loadActivityUi(): ActivityUi {
   }
 }
 
-export function saveActivityUi(ui: ActivityUi): void {
+export function saveActivityUi(identity: StoreIdentity, ui: ActivityUi): void {
   try {
-    window.localStorage.setItem(ACTIVITY_KEY, JSON.stringify(ui))
+    window.localStorage.setItem(activityKey(identity), JSON.stringify(ui))
   } catch {
     // ignore
   }
 }
 
-export function clearActivityUi(): void {
+export function clearActivityUi(identity: StoreIdentity): void {
   try {
-    window.localStorage.removeItem(ACTIVITY_KEY)
+    window.localStorage.removeItem(activityKey(identity))
   } catch {
     // ignore
   }
@@ -453,4 +485,86 @@ export async function postSubmission(
     evidenceId:
       typeof data.evidenceId === 'string' ? data.evidenceId : null,
   }
+}
+
+// ---- Session (Phase 1, Task 2) ----
+// Identity always comes from the server session cookie, which requestJson
+// sends via credentials: 'same-origin'. Error text comes from the server
+// JSON body through ApiHttpError.
+
+export interface SessionUser {
+  id: string
+  email: string
+  role: string
+}
+
+export interface SessionState {
+  authenticated: boolean
+  demo: boolean
+  user: SessionUser | null
+}
+
+function toSessionUser(value: unknown): SessionUser | null {
+  if (typeof value !== 'object' || value === null) return null
+  const user = value as Record<string, unknown>
+  if (
+    typeof user.id !== 'string' ||
+    typeof user.email !== 'string' ||
+    typeof user.role !== 'string'
+  ) {
+    return null
+  }
+  return { id: user.id, email: user.email, role: user.role }
+}
+
+export async function fetchSession(): Promise<SessionState> {
+  try {
+    const data = (await requestJson('/api/auth/me')) as {
+      authenticated?: unknown
+      demo?: unknown
+      user?: unknown
+    }
+    const user = data.authenticated === true ? toSessionUser(data.user) : null
+    if (data.authenticated === true && !user) throw new Error('Invalid session response')
+    return { authenticated: user !== null, demo: data.demo === true, user }
+  } catch {
+    return { authenticated: false, demo: false, user: null }
+  }
+}
+
+export async function fetchDemoSession(): Promise<SessionState> {
+  const data = (await requestJson('/api/auth/demo', { method: 'POST' })) as {
+    authenticated?: unknown
+    demo?: unknown
+    user?: unknown
+  }
+  const user = data.authenticated === true ? toSessionUser(data.user) : null
+  if (!user) throw new Error('Invalid demo session response')
+  return { authenticated: true, demo: data.demo === true, user }
+}
+
+export async function registerAccount(email: string, password: string): Promise<SessionUser> {
+  const data = (await requestJson('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })) as { user?: unknown }
+  const user = toSessionUser(data.user)
+  if (!user) throw new Error('Invalid registration response')
+  return user
+}
+
+export async function loginAccount(email: string, password: string): Promise<SessionUser> {
+  const data = (await requestJson('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })) as { user?: unknown }
+  const user = toSessionUser(data.user)
+  if (!user) throw new Error('Invalid login response')
+  return user
+}
+
+export async function logoutAccount(): Promise<void> {
+  await requestJson('/api/auth/logout', { method: 'POST' })
 }

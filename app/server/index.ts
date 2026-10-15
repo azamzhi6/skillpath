@@ -10,21 +10,51 @@ import { loadLocalEnv } from './ai/env.ts'
 import { GroqProvider, groqConfigFromEnv } from './ai/groq.ts'
 import type { AiProvider } from './ai/provider.ts'
 import {
-  clearAll,
+  DEMO_LEARNER_ID,
+  DEMO_USER_EMAIL,
+  clearAllForLearner,
+  createSession,
+  createUser,
+  deleteSessionByTokenHash,
+  findSessionByTokenHash,
+  findUserByEmail,
+  findUserCredentialsByEmail,
   initDb,
-  journeyExists,
-  loadGoalText,
-  loadLearning,
-  loadMastery,
-  loadSnapshot,
-  loadStageInfo,
-  saveEvidence,
+  journeyExistsForLearner,
+  loadGoalTextForLearner,
+  loadLearningForLearner,
+  loadMasteryForLearner,
+  loadSnapshotForLearner,
+  loadStageInfoForLearner,
+  saveEvidenceForLearner,
   saveFeedback,
-  saveSnapshot,
-  saveSubmission,
+  saveSnapshotForLearner,
+  saveSubmissionForLearner,
   type NewSubmission,
   type StoredSnapshot,
 } from './db.ts'
+import {
+  DEMO_SESSION_TTL_MS,
+  SESSION_TTL_MS,
+  authenticate,
+  clearSessionCookie,
+  clientIp,
+  dummyHashValue,
+  getSessionToken,
+  hashPassword,
+  hashToken,
+  ipAuthAllowed,
+  learnerIdFor,
+  loginAllowed,
+  newSessionToken,
+  normalizeAuthEmail,
+  passwordError,
+  passwordMatches,
+  publicUser,
+  recordFailedLogin,
+  sameOriginOk,
+  setSessionCookie,
+} from './auth.ts'
 import type { CriterionOutcome, MasteryRow } from './mastery.ts'
 
 loadLocalEnv()
@@ -39,6 +69,24 @@ const HOST = process.env.HOST ?? '0.0.0.0'
 const app = express()
 app.use(express.json({ limit: '256kb' }))
 
+// CSRF: session cookies are SameSite=Lax and state changes require JSON, so
+// simple cross-site forms cannot act. Requests that DO carry an
+// Origin/Referer from another host are rejected; same-origin fetch and API
+// clients (no Origin header) are unaffected.
+app.use('/api', (req, res, next) => {
+  if (
+    (req.method === 'POST' ||
+      req.method === 'PUT' ||
+      req.method === 'DELETE' ||
+      req.method === 'PATCH') &&
+    !sameOriginOk(req)
+  ) {
+    res.status(403).json({ error: 'Cross-origin request rejected' })
+    return
+  }
+  next()
+})
+
 const groqConfig = groqConfigFromEnv()
 const learnProvider: AiProvider | null = groqConfig
   ? new GroqProvider(groqConfig)
@@ -51,24 +99,186 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.get('/api/state', async (_req, res) => {
-  res.json({ state: await loadSnapshot(), learning: await loadLearning() })
+// Every learner-data endpoint requires a valid session — demo or account.
+// There is no anonymous fallback: an expired, revoked, or forged session
+// can never silently read or write the shared demo learner. Identity always
+// comes from the validated session, never from client parameters.
+app.get('/api/state', async (req, res) => {
+  const user = await authenticate(req)
+  if (!user) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  const learnerId = learnerIdFor(user)
+  res.json({
+    state: await loadSnapshotForLearner(learnerId),
+    learning: await loadLearningForLearner(learnerId),
+  })
 })
 
 app.put('/api/state', async (req, res) => {
+  const user = await authenticate(req)
+  if (!user) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  const learnerId = learnerIdFor(user)
   const body = req.body as { state?: unknown }
   const parsed = parseSnapshot(body.state)
   if (!parsed) {
     res.status(400).json({ error: 'Invalid state snapshot' })
     return
   }
-  await saveSnapshot(parsed)
+  await saveSnapshotForLearner(learnerId, parsed)
+  res.json({ ok: true, scope: learnerId === DEMO_LEARNER_ID ? 'demo' : 'authenticated' })
+})
+
+app.delete('/api/state', async (req, res) => {
+  const user = await authenticate(req)
+  if (!user) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  await clearAllForLearner(user.learnerId)
   res.json({ ok: true })
 })
 
-app.delete('/api/state', async (_req, res) => {
-  await clearAll()
+// Public registration creates learner accounts only — any client-supplied
+// role is ignored and can never reach the store.
+app.post('/api/auth/register', async (req, res) => {
+  if (!ipAuthAllowed(clientIp(req))) {
+    res.status(429).json({ error: 'Too many attempts. Try again later.' })
+    return
+  }
+  const body = req.body as { email?: unknown; password?: unknown }
+  const email = normalizeAuthEmail(body.email)
+  if (!email) {
+    res.status(400).json({ error: 'Enter a valid email address' })
+    return
+  }
+  const pwError = passwordError(body.password)
+  if (pwError) {
+    res.status(400).json({ error: pwError })
+    return
+  }
+  try {
+    const user = await createUser({
+      email,
+      passwordHash: await hashPassword(body.password as string),
+      role: 'learner',
+    })
+    const token = newSessionToken()
+    await createSession({
+      userId: user.id,
+      tokenHash: hashToken(token),
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    })
+    setSessionCookie(res, req, token)
+    res.status(201).json({ user: publicUser(user) })
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Email already registered') {
+      res.status(409).json({ error: 'Email already registered' })
+      return
+    }
+    throw err
+  }
+})
+
+app.post('/api/auth/login', async (req, res) => {
+  if (!ipAuthAllowed(clientIp(req))) {
+    res.status(429).json({ error: 'Too many attempts. Try again later.' })
+    return
+  }
+  const body = req.body as { email?: unknown; password?: unknown }
+  const email = normalizeAuthEmail(body.email)
+  if (email === DEMO_USER_EMAIL) {
+    // The demo address can never sign in (unusable password hash); reject
+    // with the generic message before any credential lookup.
+    await recordFailedLogin(email, clientIp(req))
+    res.status(401).json({ error: 'Invalid email or password' })
+    return
+  }
+  if (
+    !email ||
+    typeof body.password !== 'string' ||
+    body.password === '' ||
+    body.password.length > 200
+  ) {
+    res.status(400).json({ error: 'Invalid request' })
+    return
+  }
+  if (!(await loginAllowed(email))) {
+    res.status(429).json({ error: 'Too many attempts. Try again later.' })
+    return
+  }
+  const creds = await findUserCredentialsByEmail(email)
+  // Unknown emails cost the same dummy compare: no timing oracle, and the
+  // message below is identical either way.
+  const ok = creds
+    ? await passwordMatches(body.password, creds.passwordHash)
+    : (await passwordMatches(body.password, dummyHashValue())) && false
+  if (!ok || !creds) {
+    await recordFailedLogin(email, clientIp(req))
+    res.status(401).json({ error: 'Invalid email or password' })
+    return
+  }
+  const token = newSessionToken()
+  await createSession({
+    userId: creds.id,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+  })
+  setSessionCookie(res, req, token)
+  res.json({ user: publicUser(creds) })
+})
+
+app.post('/api/auth/logout', async (req, res) => {
+  const token = getSessionToken(req)
+  if (token) await deleteSessionByTokenHash(hashToken(token))
+  clearSessionCookie(res, req)
   res.json({ ok: true })
+})
+
+// Explicit demo mode: mints a short-lived session bound to the shared demo
+// learner. This is the only way to act as demo — anonymous requests are
+// rejected on learner-data endpoints, so an expired account session can
+// never silently fall back to demo.
+app.post('/api/auth/demo', async (req, res) => {
+  if (!ipAuthAllowed(clientIp(req))) {
+    res.status(429).json({ error: 'Too many attempts. Try again later.' })
+    return
+  }
+  const demo = await findUserByEmail(DEMO_USER_EMAIL)
+  if (!demo) {
+    res.status(500).json({ error: 'Demo unavailable' })
+    return
+  }
+  const token = newSessionToken()
+  await createSession({
+    userId: demo.id,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + DEMO_SESSION_TTL_MS).toISOString(),
+  })
+  setSessionCookie(res, req, token, DEMO_SESSION_TTL_MS)
+  res.json({ authenticated: true, demo: true, user: publicUser(demo) })
+})
+
+app.get('/api/auth/me', async (req, res) => {
+  const token = getSessionToken(req)
+  if (!token) {
+    res.json({ authenticated: false, demo: false, user: null })
+    return
+  }
+  const found = await findSessionByTokenHash(hashToken(token))
+  if (!found) {
+    res.json({ authenticated: false, demo: false, user: null })
+    return
+  }
+  res.json({
+    authenticated: true,
+    demo: found.user.learnerId === DEMO_LEARNER_ID,
+    user: publicUser(found.user),
+  })
 })
 
 // R2: AI goal parsing. Interpretation only — raw-goal validation stays
@@ -173,7 +383,13 @@ const SUBMISSION_VERDICTS = ['satisfactory', 'retry', 'remedial'] as const
 
 app.post('/api/submissions', async (req, res) => {
   try {
-    if (!(await journeyExists())) {
+    const user = await authenticate(req)
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required' })
+      return
+    }
+    const learnerId = learnerIdFor(user)
+    if (!(await journeyExistsForLearner(learnerId))) {
       res.status(400).json({ error: 'No active learning journey' })
       return
     }
@@ -191,14 +407,15 @@ app.post('/api/submissions', async (req, res) => {
         res.status(400).json({ error: 'Invalid template for criterion data' })
         return
       }
-      const stage = await loadStageInfo(parsed.submission.stageId)
+      const stage = await loadStageInfoForLearner(learnerId, parsed.submission.stageId)
       const knownIds = new Set(stage ? stage.criterionIds : [])
       if (!parsed.criteria.every((c) => knownIds.has(c.criterionId))) {
         res.status(400).json({ error: 'Unknown criterion ID for stage' })
         return
       }
     }
-    const { id, attempt } = await saveSubmission(
+    const { id, attempt } = await saveSubmissionForLearner(
+      learnerId,
       parsed.submission,
       parsed.criteria,
       parsed.template,
@@ -211,10 +428,10 @@ app.post('/api/submissions', async (req, res) => {
     let proseSource: 'ai' | 'mock' = 'mock'
     if (learnProvider && learnProvider.isConfigured()) {
       try {
-        const stage = await loadStageInfo(parsed.submission.stageId)
+        const stage = await loadStageInfoForLearner(learnerId, parsed.submission.stageId)
         const prose = await learnProvider.generateFeedbackProse({
           input: {
-            goalText: await loadGoalText(),
+            goalText: await loadGoalTextForLearner(learnerId),
             stageTitle: stage?.title ?? parsed.submission.stageId,
             stageKind: stage?.kind ?? parsed.submission.kind,
             response: parsed.submission.response,
@@ -245,7 +462,8 @@ app.post('/api/submissions', async (req, res) => {
     )
     let evidenceId: string | null = null
     if (parsed.evidence) {
-      evidenceId = await saveEvidence(
+      evidenceId = await saveEvidenceForLearner(
+        learnerId,
         id,
         parsed.evidence.capability,
         parsed.evidence.result,
@@ -261,7 +479,7 @@ app.post('/api/submissions', async (req, res) => {
         nextAction,
         proseSource,
       },
-      mastery: await loadMasteryFor(parsed.template, parsed.submission.stageId),
+      mastery: await loadMasteryFor(learnerId, parsed.template, parsed.submission.stageId),
       evidenceId,
     })
   } catch {
@@ -379,10 +597,11 @@ function parseCriteriaList(value: unknown): CriterionOutcome[] | null {
 }
 
 async function loadMasteryFor(
+  learnerId: string,
   template: string,
   stageId: string,
 ): Promise<MasteryRow[]> {
-  return (await loadMastery()).filter(
+  return (await loadMasteryForLearner(learnerId)).filter(
     (row) => row.template === template && row.stageId === stageId,
   )
 }

@@ -16,24 +16,34 @@ import {
   type CriterionResult,
 } from './mockCoach'
 import {
+  ApiHttpError,
   apiHealth,
   clearActivityUi,
+  clearJourneyCache,
   clearRemoteState,
+  fetchDemoSession,
   fetchGoalParse,
   fetchLearnContent,
   fetchLearning,
   fetchRemoteState,
+  fetchSession,
   isOfflineError,
   loadActivityUi,
-  localStorageAdapter,
+  loadJourneyCache,
+  loginAccount,
+  logoutAccount,
   postSubmission,
   pushRemoteState,
+  registerAccount,
   saveActivityUi,
+  saveJourneyCache,
   type ApiJourneySnapshot,
   type CapabilityEvidence,
   type LearningFeedback,
   type LearningMastery,
   type LearningSubmission,
+  type SessionUser,
+  type StoreIdentity,
 } from './storage'
 import type {
   Clarification,
@@ -152,6 +162,17 @@ export default function App() {
   // Phase 6B: per-stage AI Learn content. Absent/mock entries render the
   // existing deterministic stageLearn() text; only 'ai' entries are labelled.
   const [aiLearn, setAiLearn] = useState<Record<string, AiLearnEntry>>({})
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null)
+  const [sessionDemo, setSessionDemo] = useState(false)
+  const [sessionChecked, setSessionChecked] = useState(false)
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [sessionExpired, setSessionExpired] = useState(false)
+  const identity: StoreIdentity =
+    sessionUser !== null && !sessionDemo ? { kind: 'user', id: sessionUser.id } : { kind: 'demo' }
 
   function applyState(saved: LearnerState) {
     setGoalText(saved.goalText)
@@ -181,12 +202,26 @@ export default function App() {
     setRestored(true)
   }
 
-  // Restore once on load: SQLite/API first, one-time localStorage migration,
+  // Restore once on load: session first (identity selects the local cache
+  // namespace), then API state scoped server-side by the session cookie,
   // offline local copy when the API is unreachable.
   useEffect(() => {
     let cancelled = false
     async function init() {
-      const local = localStorageAdapter.load()
+      let sess = await fetchSession()
+      if (!sess.authenticated) {
+        // Explicit demo mode: mint a server-issued demo session so every
+        // subsequent call carries a validated identity. Failure falls
+        // through to the existing offline path below.
+        sess = await fetchDemoSession().catch(() => sess)
+      }
+      if (cancelled) return
+      setSessionUser(sess.user)
+      setSessionDemo(sess.demo)
+      setSessionChecked(true)
+      const starting: StoreIdentity =
+        sess.user !== null && !sess.demo ? { kind: 'user', id: sess.user.id } : { kind: 'demo' }
+      const local = loadJourneyCache(starting)
       const healthy = await apiHealth()
       if (cancelled) return
       if (healthy) {
@@ -228,7 +263,7 @@ export default function App() {
       }
       if (cancelled) return
       if (local && local.goalText.trim()) applyState(local)
-      const activity = loadActivityUi()
+      const activity = loadActivityUi(starting)
       if (!cancelled) {
         if (activity.stageId) {
           setActivityStageId(activity.stageId)
@@ -243,10 +278,10 @@ export default function App() {
     }
   }, [])
 
-  // Persist progress: always mirror locally; write through to SQLite/API
-  // while it is healthy (local copy doubles as the offline fallback).
-  // Short goals (<4 chars) stay local-only: the API rejects them, and a
-  // rejection must never flip a healthy API into offline mode.
+  // Persist progress: always mirror locally (per-identity cache); write
+  // through to the API while it is healthy (local copy doubles as the
+  // offline fallback). Short goals (<4 chars) stay local-only: the API
+  // rejects them, and a rejection must never flip a healthy API offline.
   useEffect(() => {
     if (!restored && goalText.trim() === '') return
     const state: LearnerState = {
@@ -257,23 +292,30 @@ export default function App() {
       parsedGoal,
     }
     if (goalText.trim() === '') return
-    localStorageAdapter.save(state)
+    saveJourneyCache(identity, state)
+    if (sessionExpired) return
     if (apiMode === 'api' && goalText.trim().length >= 4) {
       setSaving(true)
       pushRemoteState(buildSnapshot(state))
         .then(() => setSaving(false))
         .catch((err: unknown) => {
           setSaving(false)
+          // A dead session must surface explicitly: the server rejects the
+          // write, so the local cache is the only copy until sign-in.
+          if (err instanceof ApiHttpError && err.status === 401) {
+            setSessionExpired(true)
+            return
+          }
           if (isOfflineError(err)) setApiMode('offline')
         })
     }
-  }, [goalText, clarification, answers, completedStageIds, step, restored, apiMode, parsedGoal])
+  }, [goalText, clarification, answers, completedStageIds, step, restored, apiMode, parsedGoal, sessionUser, sessionExpired])
 
   // Activity UI (selected stage + per-stage drafts) persists in localStorage
   // only — drafts are never sent to SQLite; only submitted work persists.
   useEffect(() => {
-    saveActivityUi({ stageId: activityStageId, drafts })
-  }, [activityStageId, drafts])
+    saveActivityUi(identity, { stageId: activityStageId, drafts })
+  }, [activityStageId, drafts, sessionUser])
 
   const template = useMemo(() => detectTemplate(goalText), [goalText])
   const questions = useMemo(() => diagnosticQuestions(template), [template])
@@ -413,6 +455,47 @@ export default function App() {
     setSubmitError(null)
   }
 
+  async function handleAuthSubmit(kind: 'login' | 'register') {
+    if (authEmail.trim() === '' || authPassword === '') {
+      setAuthError(
+        kind === 'login'
+          ? 'Enter your email and password.'
+          : 'Enter an email and a password (10+ characters).',
+      )
+      return
+    }
+    setAuthBusy(true)
+    setAuthError(null)
+    try {
+      if (kind === 'login') await loginAccount(authEmail, authPassword)
+      else await registerAccount(authEmail, authPassword)
+      // Identity switching reloads: init() re-resolves the session and
+      // loads the matching journey and cache namespace from scratch.
+      window.location.reload()
+    } catch (err: unknown) {
+      if (err instanceof ApiHttpError && err.message) setAuthError(err.message)
+      else setAuthError('Something went wrong. Check the API and try again.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleLogout() {
+    if (!sessionUser) return
+    setAuthBusy(true)
+    try {
+      await logoutAccount()
+      // Drop this account's local cache so a shared device keeps nothing.
+      clearJourneyCache({ kind: 'user', id: sessionUser.id })
+      clearActivityUi({ kind: 'user', id: sessionUser.id })
+    } catch {
+      // Offline: keep the local cache (unsynced work must survive) and
+      // still return to the demo view.
+    } finally {
+      window.location.reload()
+    }
+  }
+
   async function submitPractice(stageId: string) {
     const text = (drafts[stageId] ?? '').trim()
     if (text === '') {
@@ -484,8 +567,15 @@ export default function App() {
         return next
       })
       setActivityView('feedback')
-    } catch {
-      setSubmitError('Could not save your submission. Check the API and try again.')
+    } catch (err: unknown) {
+      if (err instanceof ApiHttpError && err.status === 401) {
+        // Dead session: the server refused the write, so nothing landed
+        // anywhere unexpected. Drafts stay saved locally.
+        setSessionExpired(true)
+        setSubmitError('Your session expired — please sign in again. Your draft is saved.')
+      } else {
+        setSubmitError('Could not save your submission. Check the API and try again.')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -563,16 +653,21 @@ export default function App() {
         // Submission already saved locally in state above.
       }
       setActivityView('feedback')
-    } catch {
-      setSubmitError('Could not save your submission. Check the API and try again.')
+    } catch (err: unknown) {
+      if (err instanceof ApiHttpError && err.status === 401) {
+        setSessionExpired(true)
+        setSubmitError('Your session expired — please sign in again. Your draft is saved.')
+      } else {
+        setSubmitError('Could not save your submission. Check the API and try again.')
+      }
     } finally {
       setSubmitting(false)
     }
   }
 
   function restart() {
-    localStorageAdapter.clear()
-    clearActivityUi()
+    clearJourneyCache(identity)
+    clearActivityUi(identity)
     clearRemoteState().catch(() => {
       // Offline: local copy is already cleared.
     })
@@ -899,6 +994,114 @@ export default function App() {
             tell me what you want to learn. I will check your starting point,
             build your path and always show the next step.
           </p>
+          {sessionChecked &&
+            (!sessionDemo && sessionUser ? (
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-[15px] leading-relaxed">
+                <span>
+                  Signed in as <strong>{sessionUser.email}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  disabled={authBusy}
+                  className="rounded-[10px] border-2 border-line bg-white px-4 py-1.5 text-sm font-semibold text-muted hover:border-primary hover:text-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary disabled:opacity-50"
+                >
+                  {authBusy ? 'Signing out…' : 'Sign out'}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-line bg-surface px-4 py-3">
+                <p className="text-[15px] leading-relaxed text-muted">
+                  Demo mode — no account needed, this journey stays on this
+                  device. Sign in to keep yours.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('signin')
+                      setAuthError(null)
+                    }}
+                    className={`rounded-[10px] px-4 py-1.5 text-sm font-semibold focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary ${
+                      authMode === 'signin'
+                        ? 'bg-primary text-white'
+                        : 'border-2 border-line bg-white text-muted hover:border-primary hover:text-primary-dark'
+                    }`}
+                  >
+                    Sign in
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('signup')
+                      setAuthError(null)
+                    }}
+                    className={`rounded-[10px] px-4 py-1.5 text-sm font-semibold focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary ${
+                      authMode === 'signup'
+                        ? 'bg-primary text-white'
+                        : 'border-2 border-line bg-white text-muted hover:border-primary hover:text-primary-dark'
+                    }`}
+                  >
+                    Create account
+                  </button>
+                </div>
+                <label
+                  htmlFor="auth-email"
+                  className="mb-1 mt-3 block text-sm font-semibold text-ink"
+                >
+                  Email
+                </label>
+                <input
+                  id="auth-email"
+                  type="email"
+                  autoComplete="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleAuthSubmit(authMode === 'signup' ? 'register' : 'login')
+                  }}
+                  className="w-full rounded-lg border-2 border-line bg-white px-3 py-2 text-[15px] text-ink placeholder:text-[#8A9494] focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint"
+                  placeholder="you@example.com"
+                />
+                <label
+                  htmlFor="auth-password"
+                  className="mb-1 mt-3 block text-sm font-semibold text-ink"
+                >
+                  Password {authMode === 'signup' ? '(10+ characters)' : ''}
+                </label>
+                <input
+                  id="auth-password"
+                  type="password"
+                  autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleAuthSubmit(authMode === 'signup' ? 'register' : 'login')
+                  }}
+                  className="w-full rounded-lg border-2 border-line bg-white px-3 py-2 text-[15px] text-ink placeholder:text-[#8A9494] focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-tint"
+                  placeholder="••••••••••"
+                />
+                {authError && (
+                  <p role="alert" className="mt-2 text-[15px] font-medium text-red-700">
+                    {authError}
+                  </p>
+                )}
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleAuthSubmit(authMode === 'signup' ? 'register' : 'login')}
+                    disabled={authBusy}
+                    className="rounded-[10px] bg-primary px-6 py-2.5 text-base font-semibold text-white hover:bg-primary-dark focus:outline-none focus-visible:ring-4 focus-visible:ring-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {authBusy
+                      ? 'Please wait…'
+                      : authMode === 'signup'
+                        ? 'Create account'
+                        : 'Sign in'}
+                  </button>
+                </div>
+              </div>
+            ))}
         </header>
 
         <div aria-live="polite" className="mb-4 text-[13px] leading-relaxed text-muted">
@@ -910,6 +1113,14 @@ export default function App() {
                 ? 'Using offline copy (API unreachable).'
                 : null}
         </div>
+
+        {sessionExpired && (
+          <p role="alert" className="mb-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-[15px] font-medium leading-relaxed text-red-700">
+            Your session expired — saving is paused so nothing lands in the
+            wrong place. Please sign in again above; your drafts are saved on
+            this device.
+          </p>
+        )}
 
         <main>
           {step === 'goal' && (
@@ -1490,7 +1701,8 @@ export default function App() {
 
         <footer className="mt-8 text-center text-[13px] leading-relaxed text-muted">
           SkillPath — rule-based capability assessment with AI-assisted
-          learning support. No account required.
+          learning support. Demo needs no account — sign in to keep your
+          journey.
         </footer>
       </div>
     </div>
