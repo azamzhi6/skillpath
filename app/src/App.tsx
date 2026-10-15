@@ -21,7 +21,6 @@ import {
   clearActivityUi,
   clearJourneyCache,
   clearRemoteState,
-  fetchDemoSession,
   fetchGoalParse,
   fetchLearnContent,
   fetchLearning,
@@ -209,18 +208,14 @@ export default function App() {
     let cancelled = false
     async function init() {
       let sess = await fetchSession()
-      if (!sess.authenticated) {
-        // Explicit demo mode: mint a server-issued demo session so every
-        // subsequent call carries a validated identity. Failure falls
-        // through to the existing offline path below.
-        sess = await fetchDemoSession().catch(() => sess)
-      }
+
       if (cancelled) return
       setSessionUser(sess.user)
       setSessionDemo(sess.demo)
       setSessionChecked(true)
-      const starting: StoreIdentity =
-        sess.user !== null && !sess.demo ? { kind: 'user', id: sess.user.id } : { kind: 'demo' }
+      // Never load a journey unless a real learner account is authenticated.
+      if (!sess.authenticated || sess.demo || !sess.user) return
+      const starting: StoreIdentity = { kind: 'user', id: sess.user.id }
       const local = loadJourneyCache(starting)
       const healthy = await apiHealth()
       if (cancelled) return
@@ -1011,10 +1006,7 @@ export default function App() {
               </div>
             ) : (
               <div className="mt-3 rounded-xl border border-line bg-surface px-4 py-3">
-                <p className="text-[15px] leading-relaxed text-muted">
-                  Demo mode — no account needed, this journey stays on this
-                  device. Sign in to keep yours.
-                </p>
+
                 <div className="mt-2 flex gap-2">
                   <button
                     type="button"
@@ -1122,7 +1114,8 @@ export default function App() {
           </p>
         )}
 
-        <main>
+        {sessionChecked && sessionUser !== null && !sessionDemo ? (
+          <main>
           {step === 'goal' && (
             <section className="rounded-2xl border border-line bg-white p-6">
               <h2 className="text-[22px] font-bold leading-snug tracking-tight text-ink">
@@ -1697,7 +1690,13 @@ export default function App() {
               </div>
             </div>
           )}
-        </main>
+          </main>
+        ) : (
+          <main className="rounded-2xl border border-line bg-white p-6">
+            <h2 className="text-[22px] font-bold text-ink">Sign in to continue</h2>
+            <p className="mt-2 text-[15px] leading-relaxed text-muted">Create an account or sign in above to access your learning journey.</p>
+          </main>
+        )}
 
         <footer className="mt-8 text-center text-[13px] leading-relaxed text-muted">
           SkillPath — rule-based capability assessment with AI-assisted
