@@ -284,6 +284,13 @@ const demo = makeClient()
   await clientB.call('PUT', '/api/state', { state: { ...BASE_SNAPSHOT, goalText: 'B journey text' } })
   const getA2 = await clientA.call('GET', '/api/state')
   check('concurrent learner journeys stay separate', getA2.json?.state?.goalText === 'A journey text')
+  const delB = await clientB.call('DELETE', '/api/state')
+  const getA3 = await clientA.call('GET', '/api/state')
+  const getB3 = await clientB.call('GET', '/api/state')
+  check(
+    'cross-account reset clears only that learner',
+    delB.status === 200 && getB3.json?.state === null && getA3.json?.state?.goalText === 'A journey text',
+  )
 }
 
 // ---- Demo/account separation, demo login guard, expiry, revocation ----
@@ -384,6 +391,18 @@ const demo = makeClient()
   check('logged-out session no longer valid', meAfter.json?.authenticated === false)
   const replay = await clientA.call('GET', '/api/auth/me', undefined, { cookie: `sp_session=${stale}` })
   check('stale token rejected after logout', replay.json?.authenticated === false)
+  const replayWrite = await clientA.call('PUT', '/api/state', { state: { ...BASE_SNAPSHOT, goalText: 'Attacker overwrite' } }, { cookie: `sp_session=${stale}` })
+  check('logged-out token cannot write', replayWrite.status === 401)
+  await clientA.call('POST', '/api/auth/login', {
+    email: 'a@example.com',
+    password: 'correct-horse-10',
+  })
+  const aAfter = await clientA.call('GET', '/api/state')
+  check('logged-out write left the journey unchanged', aAfter.json?.state?.goalText === 'A journey text')
+  const demoFresh = makeClient()
+  await demoFresh.call('POST', '/api/auth/demo')
+  const demoAfter = await demoFresh.call('GET', '/api/state')
+  check('logged-out write left demo data unchanged', demoAfter.json?.state?.goalText === 'Demo journey text')
 }
 
 {
