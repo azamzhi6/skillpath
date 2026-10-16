@@ -3,11 +3,11 @@
 Thin Express API backed by PostgreSQL (`pg` pool). No cloud
 (except the database host), no AI calls except optional Groq.
 Authentication: bcryptjs passwords, opaque HttpOnly session cookies,
-per-learner authorization, explicit demo sessions.
+per-learner authorization.
 
 **Status: Phases 3–5 implemented; Phase 6A–6C implemented (Real-AI Learn
 content via Groq with deterministic mock fallback); Phase 1 implemented
-(learner accounts, sessions, per-learner isolation, demo sessions).**
+(learner accounts, sessions and per-learner isolation).**
 Next planned work: **Phase 6D+** (not implemented).
 
 ## Node version
@@ -57,9 +57,9 @@ additional environment variables.
 
 ## Endpoints
 
-Learner-data endpoints require a valid session (account or explicit demo
-session, carried in the HttpOnly `sp_session` cookie) and answer 401
-otherwise — there is no anonymous fallback. Identity always comes from the
+Learner-data endpoints require a valid signed-in session (carried in the
+HttpOnly `sp_session` cookie) and answer 401 otherwise — there is no
+anonymous fallback. Identity always comes from the
 validated session, never from client parameters. State-changing requests
 with a cross-host `Origin`/`Referer` are rejected (403).
 
@@ -67,7 +67,6 @@ with a cross-host `Origin`/`Referer` are rejected (403).
 - `POST /api/auth/register` ← `{ email, password }` (10+ chars; role always `learner`) → 201 `{ user }` with session cookie; 400 on invalid input, 409 on duplicate email
 - `POST /api/auth/login` ← `{ email, password }` → 200 `{ user }` with session cookie; generic 401 on bad credentials; 429 after repeated failures
 - `POST /api/auth/logout` → revokes the session, clears the cookie
-- `POST /api/auth/demo` → mints a short-lived demo session for the shared demo learner; the only way to act as demo
 - `GET /api/auth/me` → `{ authenticated, demo, user }` (`demo` marks the shared demo identity)
 - `GET /api/state` → `{ state: <journey snapshot> | null, learning: { submissions[], feedback[], evidence[] } }` for the session owner only
 - `PUT /api/state` ← `{ state: <journey snapshot> }` (validated, upsert in one transaction; 400 on invalid payload or malformed JSON) → `{ ok: true, scope }`

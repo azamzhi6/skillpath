@@ -18,7 +18,6 @@ import {
 
 export const SESSION_COOKIE = 'sp_session'
 export const SESSION_TTL_MS = 30 * 24 * 3600 * 1000
-export const DEMO_SESSION_TTL_MS = 7 * 24 * 3600 * 1000
 const BCRYPT_COST = 10
 const LOGIN_MAX_FAILURES = 20
 const LOGIN_WINDOW_MS = 10 * 60 * 1000

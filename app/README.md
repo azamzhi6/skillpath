@@ -3,12 +3,12 @@
 **Status: Phases 3–5 implemented; Phase 6A–6C implemented (Real-AI Learn
 content via Groq with deterministic mock fallback); Phase 1 implemented
 (learner accounts with registration, login, logout and server-side
-sessions, per-learner data isolation, and explicit demo sessions).**
+sessions and per-learner data isolation).**
 Next planned work: **Phase 6D+** (not implemented).
 
 Working SkillPath page with mock coaching logic. Persistence is a thin
 Express API backed by PostgreSQL (`pg` pool); browser localStorage remains
-only as an offline fallback. Demo mode needs no account — signing in keeps
+only as an offline fallback. Sign in to keep
 a personal, isolated learning journey. No external services beyond the
 database host and optional Groq.
 
@@ -54,7 +54,7 @@ capability demonstration records persistent evidence of ability.
 Progress persists in PostgreSQL via the thin Express API (`storage.ts`
 adapter seam); browser localStorage (`skillpath.prototype.v1`) is kept only as
 an offline fallback and as the one-time migration source. API persistence
-requires a valid session (demo or account) and returns 401 otherwise; the
+requires a valid signed-in session and returns 401 otherwise; the
 browser cache is namespaced per identity so accounts never share demo data.
 
 ## Learning loop (Phase 5)
@@ -118,7 +118,7 @@ npm.cmd run build
 8. Open http://localhost:5173 and run the journey: goal → clarification →
    diagnostic → path → tick a stage done.
 9. Hard-refresh the browser → goal, path and completed stage remain.
-10. Reset demo → journey clears.
+10. Start over → journey clears.
 
 ## Testing checklist
 
@@ -137,15 +137,14 @@ npm.cmd run build
 - Malformed `PUT` body → JSON 400 (`Invalid state snapshot` / `Invalid JSON`).
 - `DELETE /api/state` with a valid session → `GET` returns `{ "state": null }`.
 - Anonymous `GET`/`PUT`/`DELETE /api/state` and `POST /api/submissions` → 401.
-- Register → signed in with an isolated journey; second account sees neither
-  demo nor first-account data; sign out → demo view; expired session →
+- Register → signed in with an isolated journey; a second account sees only
+  its own data; sign out → sign-in screen; expired session →
   explicit banner, writes paused, drafts kept.
 
 ## Known limitations
 
-- Demo learner plus registered accounts (one active goal per learner).
-  Anonymous API access is rejected; demo works through an explicit
-  server-issued demo session.
+- Registered accounts (one active goal per learner).
+  Anonymous API access is rejected; a valid signed-in session is required.
 - Deterministic mock coach (4 templates) and mock evaluation; no real AI.
 - Submitting needs the local API; offline mode keeps the journey readable
   but disables Submit (no offline queue).
@@ -168,6 +167,6 @@ npm.cmd run build
 
 Mocked now: coach responses, scoring, resources, resource discovery. Live now:
 learner accounts (registration, login, logout, server-side sessions),
-per-learner data isolation, explicit demo sessions. Future MVP/production
+per-learner data isolation. Future MVP/production
 would add: multi-learner goals, Docker/cloud beyond Netlify static+functions,
 admin, analytics — none of that is in this prototype.

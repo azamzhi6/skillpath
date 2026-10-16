@@ -1,12 +1,13 @@
-// Phase 1 Task 2 (+expiry review): HTTP authentication + authorization tests.
+// Phase 1 Task 2 (+expiry review, demo removal): HTTP authentication +
+// authorization tests.
 // Run: npm run test:auth
 // Uses pg-mem (no server required) through the real Express app via
 // serverless-http (same wrapper as the Netlify Function). Every
-// learner-data endpoint requires a valid session (demo sessions are minted
-// explicitly via POST /api/auth/demo); anonymous and forged sessions get
-// 401 on all reads and writes. Exercises the cookie jar end to end:
-// register, login, logout, me, expiry, revocation, invalid credentials,
-// duplicates, throttling, isolation between learners and demo, and CSRF.
+// learner-data endpoint requires a valid account session; anonymous and
+// forged sessions get 401 on all reads and writes, and no demo session
+// can be obtained. Exercises the cookie jar end to end: register, login,
+// logout, me, expiry, revocation, invalid credentials, duplicates,
+// throttling, isolation between learners, and CSRF.
 import { newDb } from 'pg-mem'
 import serverless from 'serverless-http'
 
@@ -246,18 +247,13 @@ function practicePayload(overrides = {}) {
   check('forged token rejected', forged.status === 401)
 }
 
-const demo = makeClient()
+// The demo entry point is removed: no session can be obtained without
+// registering or signing in, with or without credentials.
 {
-  const hello = await demo.call('POST', '/api/auth/demo')
-  check(
-    'demo handshake issues a session',
-    hello.status === 200 &&
-      hello.json?.authenticated === true &&
-      hello.json?.demo === true &&
-      typeof hello.json?.user?.email === 'string',
-  )
-  const put = await demo.call('PUT', '/api/state', { state: { ...BASE_SNAPSHOT, goalText: 'Demo journey text' } })
-  check('demo writes stay on demo scope', put.status === 200 && put.json?.scope === 'demo')
+  const noSession = await anon.call('POST', '/api/auth/demo')
+  check('demo endpoint unavailable without credentials', noSession.status === 404)
+  const withCreds = await anon.call('POST', '/api/auth/demo', { email: 'a@example.com', password: 'x' })
+  check('demo endpoint unavailable with credentials', withCreds.status === 404)
 }
 
 {
@@ -267,9 +263,7 @@ const demo = makeClient()
   })
   check('third account registers', res.status === 201)
   const got = await clientC.call('GET', '/api/state')
-  check('new account sees neither demo nor others', got.status === 200 && got.json?.state === null)
-  const demoGot = await demo.call('GET', '/api/state')
-  check('demo session still sees demo journey', demoGot.json?.state?.goalText === 'Demo journey text')
+  check('new account starts with an empty journey', got.status === 200 && got.json?.state === null)
 }
 
 {
@@ -293,15 +287,9 @@ const demo = makeClient()
   )
 }
 
-// ---- Demo/account separation, demo login guard, expiry, revocation ----
+// ---- Reserved demo address, expiry, revocation ----
 {
-  const demoGot = await demo.call('GET', '/api/state')
-  const getA = await clientA.call('GET', '/api/state')
-  check(
-    'demo and account journeys stay separate',
-    demoGot.json?.state?.goalText === 'Demo journey text' && getA.json?.state?.goalText === 'A journey text',
-  )
-  const demoLogin = await demo.call('POST', '/api/auth/login', {
+  const demoLogin = await anon.call('POST', '/api/auth/login', {
     email: 'demo@skillpath.local',
     password: 'anything-at-all-10',
   })
@@ -324,13 +312,6 @@ const demo = makeClient()
   })
   const recovered = await clientD.call('GET', '/api/state')
   check('expired write preserved the original journey', recovered.json?.state?.goalText === 'D journey text')
-}
-
-{
-  const staleDemo = demo.jar.sp_session
-  await demo.call('POST', '/api/auth/logout')
-  const put = await demo.call('PUT', '/api/state', { state: BASE_SNAPSHOT }, { cookie: `sp_session=${staleDemo}` })
-  check('revoked demo session cannot write', put.status === 401)
 }
 
 // ---- Submissions isolation ----
@@ -399,10 +380,6 @@ const demo = makeClient()
   })
   const aAfter = await clientA.call('GET', '/api/state')
   check('logged-out write left the journey unchanged', aAfter.json?.state?.goalText === 'A journey text')
-  const demoFresh = makeClient()
-  await demoFresh.call('POST', '/api/auth/demo')
-  const demoAfter = await demoFresh.call('GET', '/api/state')
-  check('logged-out write left demo data unchanged', demoAfter.json?.state?.goalText === 'Demo journey text')
 }
 
 // ---- Expired-session cleanup on authentication ----

@@ -532,17 +532,6 @@ export async function fetchSession(): Promise<SessionState> {
   }
 }
 
-export async function fetchDemoSession(): Promise<SessionState> {
-  const data = (await requestJson('/api/auth/demo', { method: 'POST' })) as {
-    authenticated?: unknown
-    demo?: unknown
-    user?: unknown
-  }
-  const user = data.authenticated === true ? toSessionUser(data.user) : null
-  if (!user) throw new Error('Invalid demo session response')
-  return { authenticated: true, demo: data.demo === true, user }
-}
-
 export async function registerAccount(email: string, password: string): Promise<SessionUser> {
   const data = (await requestJson('/api/auth/register', {
     method: 'POST',

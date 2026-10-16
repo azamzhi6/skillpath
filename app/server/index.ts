@@ -17,7 +17,6 @@ import {
   createUser,
   deleteSessionByTokenHash,
   findSessionByTokenHash,
-  findUserByEmail,
   findUserCredentialsByEmail,
   initDb,
   journeyExistsForLearner,
@@ -34,7 +33,6 @@ import {
   type StoredSnapshot,
 } from './db.ts'
 import {
-  DEMO_SESSION_TTL_MS,
   SESSION_TTL_MS,
   authenticate,
   clearSessionCookie,
@@ -240,31 +238,6 @@ app.post('/api/auth/logout', async (req, res) => {
   if (token) await deleteSessionByTokenHash(hashToken(token))
   clearSessionCookie(res, req)
   res.json({ ok: true })
-})
-
-// Explicit demo mode: mints a short-lived session bound to the shared demo
-// learner. This is the only way to act as demo — anonymous requests are
-// rejected on learner-data endpoints, so an expired account session can
-// never silently fall back to demo.
-app.post('/api/auth/demo', async (req, res) => {
-  if (!ipAuthAllowed(clientIp(req))) {
-    res.status(429).json({ error: 'Too many attempts. Try again later.' })
-    return
-  }
-  const demo = await findUserByEmail(DEMO_USER_EMAIL)
-  if (!demo) {
-    res.status(500).json({ error: 'Demo unavailable' })
-    return
-  }
-  const token = newSessionToken()
-  await createSession({
-    userId: demo.id,
-    tokenHash: hashToken(token),
-    expiresAt: new Date(Date.now() + DEMO_SESSION_TTL_MS).toISOString(),
-  })
-  await purgeExpiredBestEffort()
-  setSessionCookie(res, req, token, DEMO_SESSION_TTL_MS)
-  res.json({ authenticated: true, demo: true, user: publicUser(demo) })
 })
 
 app.get('/api/auth/me', async (req, res) => {

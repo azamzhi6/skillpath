@@ -19,8 +19,8 @@ function check(name, cond) {
   if (!cond) failures++
 }
 
-// Explicit demo mode for the whole suite: every call below carries the
-// server-issued demo session (assertions are unchanged).
+// Authenticated fixture account for the whole suite: every call below carries
+// this account's session (assertions are unchanged).
 const jar = {}
 
 function storeCookies(res) {
@@ -65,7 +65,10 @@ async function call(method, path, body) {
   return { status: res.statusCode, json }
 }
 
-await call('POST', '/api/auth/demo')
+await call('POST', '/api/auth/register', {
+  email: 'api-fixture@example.com',
+  password: 'correct-horse-10',
+})
 
 const SNAPSHOT = {
   goalText: 'I want to learn Excel for financial analysis',

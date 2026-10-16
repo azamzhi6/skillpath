@@ -26,3 +26,6 @@ app/server/data/
 # `npm run build:function`; never commit build outputs)
 app/netlify/functions/api.mjs
 app/netlify/functions/schema.sql
+
+# Local editor/IDE backup files
+*.bak

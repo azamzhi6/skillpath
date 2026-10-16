@@ -485,7 +485,7 @@ export default function App() {
       clearActivityUi({ kind: 'user', id: sessionUser.id })
     } catch {
       // Offline: keep the local cache (unsynced work must survive) and
-      // still return to the demo view.
+      // still return to the sign-in screen.
     } finally {
       window.location.reload()
     }
@@ -1700,8 +1700,7 @@ export default function App() {
 
         <footer className="mt-8 text-center text-[13px] leading-relaxed text-muted">
           SkillPath — rule-based capability assessment with AI-assisted
-          learning support. Demo needs no account — sign in to keep your
-          journey.
+          learning support. Sign in to keep your journey.
         </footer>
       </div>
     </div>
